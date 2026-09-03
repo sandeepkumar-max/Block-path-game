@@ -1,0 +1,6 @@
+{
+  "name": "BlockPath",
+  "description": "BlockPath - Strategy Duel, a 9x9 offline Quoridor-like game",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

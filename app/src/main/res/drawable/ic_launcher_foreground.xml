@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Board Base (Warm Beige Rounded Square in safe zone) -->
+    <path
+        android:pathData="M34,26 h40 c4.4,0 8,3.6 8,8 v40 c0,4.4 -3.6,8 -8,8 h-40 c-4.4,0 -8,-3.6 -8,-8 v-40 c0,-4.4 3.6,-8 8,-8 z"
+        android:fillColor="#F5E6CA" />
+
+    <!-- Board 3x3 Grid Lines -->
+    <path
+        android:pathData="M44,28 v52 M64,28 v52 M28,45 h52 M28,63 h52"
+        android:strokeWidth="1.2"
+        android:strokeColor="#D4C3A3" />
+
+    <!-- Player 1: Deep Blue Pawn (Top-Left cell center at 36, 36) -->
+    <path
+        android:pathData="M36,36 m-6.5,0 a6.5,6.5 0 1,0 13,0 a6.5,6.5 0 1,0 -13,0"
+        android:fillColor="#1E3A8A" />
+    <path
+        android:pathData="M36,36 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0"
+        android:fillColor="#3B82F6" />
+
+    <!-- Player 2: Warm Red Pawn (Bottom-Right cell center at 72, 71) -->
+    <path
+        android:pathData="M72,71 m-6.5,0 a6.5,6.5 0 1,0 13,0 a6.5,6.5 0 1,0 -13,0"
+        android:fillColor="#DC2626" />
+    <path
+        android:pathData="M72,71 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0"
+        android:fillColor="#EF4444" />
+
+    <!-- Charcoal Black Dividing Wall Barricade (center blocking path) -->
+    <path
+        android:pathData="M54,34 L54,64"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeColor="#2B2B2B" />
+
+    <path
+        android:pathData="M44,54 L64,54"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeColor="#2B2B2B" />
+
+</vector>

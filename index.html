@@ -1,27 +1,177 @@
-Thank you for playing BlockPath ("we", "our", or "us"). We are committed to protecting your personal privacy. This Privacy Policy explains how our mobile application handles user information.
-1. Information We Collect
-BlockPath does NOT collect, store, or transmit any personally identifiable information (PII).
-Personal Information: We do not ask for or collect your name, email address, phone number, location, or contacts.
-Gameplay Data: All game progress, statistics (such as matches won, high scores, coins, and themes), and user settings (sound effects, haptic vibration, dark mode) are stored locally on your device using local storage (Room Database / Android SharedPreferences). This data never leaves your device and is deleted if you uninstall the app or clear app data.
-2. Device Permissions Used
-BlockPath only requests minimal technical permissions strictly necessary for standard application operations:
-INTERNET & ACCESS_NETWORK_STATE: Used solely for checking network connectivity and standard platform operational services.
-VIBRATION: Used solely to provide tactile haptic feedback during pawn movements and wall placements (which can be disabled at any time in the in-game Settings).
-We do not access your camera, microphone, device storage, photos, or precise GPS location.
-3. Third-Party Services & Advertising
-BlockPath does not sell, trade, or rent any user data to third parties.
-If third-party services (such as Google Play Services) are utilized for platform compatibility or future optional cloud services, their collection and processing of diagnostic data is governed by the Google Play Services Privacy Policy.
-4. Children’s Privacy (COPPA Compliance)
-BlockPath is a family-friendly board strategy game suitable for all ages. We do not knowingly collect any personal information from children under the age of 13. Since our game does not collect personal data from any user, it fully complies with the Children’s Online Privacy Protection Act (COPPA) and Google Play Families Policy.
-5. Security of Your Data
-Because all gameplay preferences and local data remain strictly on your physical Android device, you have complete control over your data. You can erase all app data at any time via your device’s Settings > Apps > BlockPath > Clear Data.
-6. Changes to This Privacy Policy
-We may update our Privacy Policy from time to time. Any changes will be posted on this page with an updated "Effective Date".
-7. Contact Us
-If you have any questions, suggestions, or concerns regarding this Privacy Policy or the game, please contact us at:
-Developer / Support Email: sandeepkumar28wu@gmail.com
-App Name: BlockPath
-💡 Tips Google Play Console ke liye:
-Ek free Google doc ya Google Sites banayein.
-Upar diya gaya text wahan paste karein aur Publish par click karein.
-Jo link milega (https://sites.google.com/view/blockpath-privacy-policy), use Play Console me App Content > Privacy Policy me paste kar dein!
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - BlockPath</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f8fafc;
+            color: #334155;
+            line-height: 1.7;
+            padding: 24px 16px;
+        }
+        .container {
+            max-width: 780px;
+            margin: 0 auto;
+            background: #ffffff;
+            padding: 40px 32px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e2e8f0;
+        }
+        .header {
+            border-bottom: 2px solid #f1f5f9;
+            padding-bottom: 24px;
+            margin-bottom: 28px;
+        }
+        .badge {
+            display: inline-block;
+            background: #e0f2fe;
+            color: #0284c7;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        h1 {
+            font-size: 28px;
+            color: #0f172a;
+            margin-bottom: 8px;
+        }
+        .date {
+            font-size: 14px;
+            color: #64748b;
+        }
+        h2 {
+            font-size: 19px;
+            color: #1e293b;
+            margin-top: 28px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        p {
+            margin-bottom: 16px;
+            font-size: 15px;
+            color: #475569;
+        }
+        ul {
+            margin-bottom: 16px;
+            padding-left: 24px;
+        }
+        li {
+            margin-bottom: 8px;
+            font-size: 15px;
+            color: #475569;
+        }
+        li strong {
+            color: #1e293b;
+        }
+        .card {
+            background-color: #f1f5f9;
+            border-left: 4px solid #0284c7;
+            padding: 16px 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .contact-box {
+            background-color: #f8fafc;
+            border: 1px solid #cbd5e1;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        .contact-box a {
+            color: #0284c7;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .contact-box a:hover {
+            text-decoration: underline;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 36px;
+            font-size: 13px;
+            color: #94a3b8;
+            border-top: 1px solid #f1f5f9;
+            padding-top: 20px;
+        }
+        @media (max-width: 600px) {
+            .container {
+                padding: 24px 18px;
+            }
+            h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <span class="badge">Official Policy</span>
+        <h1>Privacy Policy for BlockPath</h1>
+        <div class="date">Effective Date: September 4, 2026 | Last Updated: September 4, 2026</div>
+    </div>
+
+    <p>Thank you for playing <strong>BlockPath</strong> ("we", "our", or "us"). We respect your privacy and are committed to protecting it. This Privacy Policy explains how information is handled when you use our mobile application.</p>
+
+    <div class="card">
+        <strong>Summary:</strong> BlockPath is designed as an offline-first board game. <strong>We do not collect, sell, or share any personal identifiable information (PII).</strong>
+    </div>
+
+    <h2>1. Information We Collect (Or Do Not Collect)</h2>
+    <p>We believe in complete transparency and minimal data usage:</p>
+    <ul>
+        <li><strong>No Personal Information:</strong> We do not ask for or collect your name, email address, phone number, location, contacts, or photos.</li>
+        <li><strong>Local Gameplay Data:</strong> All your stats (games won, moves count, board themes, coins) and user preferences (dark theme, sound volume, vibration) are stored <strong>strictly locally on your Android device</strong>. This data never leaves your device and is wiped if you uninstall the app or clear cache.</li>
+    </ul>
+
+    <h2>2. Device Permissions Used</h2>
+    <p>BlockPath only uses minimal permissions strictly required for standard Android app functionality:</p>
+    <ul>
+        <li><strong>INTERNET & ACCESS_NETWORK_STATE:</strong> Used solely for standard network status checks and basic platform operational integrity.</li>
+        <li><strong>VIBRATION:</strong> Used only to trigger tactile haptic vibrations during board moves and wall drops. You can disable this at any time in the in-game Settings.</li>
+    </ul>
+    <p>We <strong>do not</strong> request access to sensitive features such as your Camera, Microphone, GPS Location, or Internal Storage files.</p>
+
+    <h2>3. Third-Party Services</h2>
+    <p>Our app does not share, rent, or monetize your data. Any standard Android platform libraries (such as Google Play Services) that operate in the background are governed by the <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google Privacy Policy</a>.</p>
+
+    <h2>4. Children’s Privacy (COPPA & Families Policy)</h2>
+    <p>BlockPath is a family-safe strategy board game suitable for players of all ages. We do not knowingly collect any information from children under the age of 13. Our application complies with the <strong>Children’s Online Privacy Protection Act (COPPA)</strong> and the <strong>Google Play Families Policy</strong>.</p>
+
+    <h2>5. Data Security & User Control</h2>
+    <p>Because your game data is stored directly on your phone's internal storage, you have 100% control over your data. You can delete all your stored stats at any time by going to your phone's <strong>Settings &gt; Apps &gt; BlockPath &gt; Storage &gt; Clear Storage</strong>.</p>
+
+    <h2>6. Changes to This Privacy Policy</h2>
+    <p>We may periodically update this policy. Any changes will be reflected on this page with an updated "Last Updated" date.</p>
+
+    <h2>7. Contact Us</h2>
+    <p>If you have any questions or feedback regarding this Privacy Policy, feel free to reach out to us:</p>
+    <div class="contact-box">
+        <p><strong>App:</strong> BlockPath</p>
+        <p><strong>Developer Email:</strong> <a href="mailto:sandeepkumar28wu@gmail.com">sandeepkumar28wu@gmail.com</a></p>
+    </div>
+
+    <div class="footer">
+        &copy; 2026 BlockPath. All rights reserved.
+    </div>
+</div>
+
+</body>
+</html>

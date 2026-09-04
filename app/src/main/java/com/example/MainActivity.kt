@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
           }
           composable("home") {
             HomeScreen(
+              gameViewModel = gameViewModel,
               onStartPassAndPlay = {
                 gameViewModel.startGame(GameMode.LOCAL_PASS_AND_PLAY)
                 navController.navigate("game")
@@ -40,8 +41,31 @@ class MainActivity : ComponentActivity() {
                 gameViewModel.startGame(GameMode.VS_COMPUTER, difficulty)
                 navController.navigate("game")
               },
+              onStartTutorial = {
+                navController.navigate("tutorial")
+              },
               onOpenAuth = {
                 navController.navigate("auth")
+              }
+            )
+          }
+          composable("tutorial") {
+            TutorialScreen(
+              gameViewModel = gameViewModel,
+              onFinishTutorial = {
+                navController.popBackStack("home", inclusive = false)
+              },
+              onStartVsAi = {
+                gameViewModel.startGame(GameMode.VS_COMPUTER, AIDifficulty.EASY)
+                navController.navigate("game") {
+                  popUpTo("home")
+                }
+              },
+              onStartPassAndPlay = {
+                gameViewModel.startGame(GameMode.LOCAL_PASS_AND_PLAY)
+                navController.navigate("game") {
+                  popUpTo("home")
+                }
               }
             )
           }

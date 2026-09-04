@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.ui.AppSettingsDialog
 import com.example.ui.BlockPathLogo
 import com.example.ui.theme.*
 import kotlinx.coroutines.delay
@@ -74,6 +75,8 @@ fun GameScreen(
     var wallValidationMsg by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var showRewardDialog by remember { mutableStateOf(false) }
+    var showConfirmBackDialog by remember { mutableStateOf(false) }
+    var showConfirmResetDialog by remember { mutableStateOf(false) }
 
     var invalidCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val shakeOffset = remember { Animatable(0f) }
@@ -113,7 +116,16 @@ fun GameScreen(
             TopAppBar(
                 title = { Text("BlockPath", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (appSettings.darkTheme) Color.White else WallColor) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = {
+                            // If game has started (moves made or walls placed) and not finished, ask confirmation
+                            if (gameState.winner == null && (gameState.moveCount > 0 || gameState.walls.isNotEmpty())) {
+                                showConfirmBackDialog = true
+                            } else {
+                                onBack()
+                            }
+                        }
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to Menu", tint = if (appSettings.darkTheme) Color.White else WallColor)
                     }
                 },
@@ -126,8 +138,13 @@ fun GameScreen(
                     }
                     IconButton(
                         onClick = {
-                            pendingWall = null
-                            gameViewModel.resetGame()
+                            // If moves made or walls placed, ask confirmation before reset
+                            if (gameState.winner == null && (gameState.moveCount > 0 || gameState.walls.isNotEmpty())) {
+                                showConfirmResetDialog = true
+                            } else {
+                                pendingWall = null
+                                gameViewModel.resetGame()
+                            }
                         },
                         modifier = Modifier.testTag("reset_game_btn")
                     ) {
@@ -492,40 +509,133 @@ fun GameScreen(
         }
 
         if (showSettings) {
+            AppSettingsDialog(
+                appSettings = appSettings,
+                onSettingsChanged = { gameViewModel.updateSettings(it) },
+                onDismiss = { showSettings = false }
+            )
+        }
+
+        // Confirmation Dialog: Leave Game / Back to Menu
+        if (showConfirmBackDialog) {
             AlertDialog(
-                onDismissRequest = { showSettings = false },
-                title = { Text("Settings", fontWeight = FontWeight.Bold) },
-                text = {
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                            Text("Wall Button Controls", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                            Switch(
-                                checked = appSettings.classicControls,
-                                onCheckedChange = { gameViewModel.updateSettings(appSettings.copy(classicControls = it)) }
-                            )
-                        }
-                        Text("Use Horizontal/Vertical buttons to place walls instead of dragging (Recommended for mobile screens).", fontSize = 12.sp, color = Color.Gray)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                            Text("Sound & Haptics", modifier = Modifier.weight(1f))
-                            Switch(
-                                checked = appSettings.soundEnabled,
-                                onCheckedChange = { gameViewModel.updateSettings(appSettings.copy(soundEnabled = it)) }
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                            Text("Dark Theme", modifier = Modifier.weight(1f))
-                            Switch(
-                                checked = appSettings.darkTheme,
-                                onCheckedChange = { gameViewModel.updateSettings(appSettings.copy(darkTheme = it)) }
-                            )
-                        }
+                onDismissRequest = { showConfirmBackDialog = false },
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .background(Color(0xFFFEF2F2), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = null,
+                            tint = ErrorRed,
+                            modifier = Modifier.size(26.dp)
+                        )
                     }
                 },
+                title = {
+                    Text(
+                        text = "Leave Current Game?",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        textAlign = TextAlign.Center
+                    )
+                },
+                text = {
+                    Text(
+                        text = "A match is currently in progress. If you go back to the menu, your current game progress will be lost.\n\nAre you sure you want to quit?",
+                        fontSize = 14.sp,
+                        color = if (appSettings.darkTheme) Color(0xFFCBD5E1) else Color(0xFF475569),
+                        textAlign = TextAlign.Center,
+                        lineHeight = 20.sp
+                    )
+                },
                 confirmButton = {
-                    TextButton(onClick = { showSettings = false }) { Text("Close") }
-                }
+                    Button(
+                        onClick = {
+                            showConfirmBackDialog = false
+                            onBack()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Quit Match", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = { showConfirmBackDialog = false },
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Continue Playing", color = if (appSettings.darkTheme) Color.White else Color(0xFF334155))
+                    }
+                },
+                shape = RoundedCornerShape(18.dp)
+            )
+        }
+
+        // Confirmation Dialog: Reset / Restart Match
+        if (showConfirmResetDialog) {
+            AlertDialog(
+                onDismissRequest = { showConfirmResetDialog = false },
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .background(Color(0xFFFEF3C7), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = Color(0xFFD97706),
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                },
+                title = {
+                    Text(
+                        text = "Restart Game?",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        textAlign = TextAlign.Center
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Restarting will clear all placed walls and return all pawns to their starting positions.\n\nDo you want to reset the board?",
+                        fontSize = 14.sp,
+                        color = if (appSettings.darkTheme) Color(0xFFCBD5E1) else Color(0xFF475569),
+                        textAlign = TextAlign.Center,
+                        lineHeight = 20.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showConfirmResetDialog = false
+                            pendingWall = null
+                            wallValidationMsg = null
+                            interactionMode = PlayerInteractionMode.MOVE_PAWN
+                            gameViewModel.resetGame()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Restart", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = { showConfirmResetDialog = false },
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Cancel", color = if (appSettings.darkTheme) Color.White else Color(0xFF334155))
+                    }
+                },
+                shape = RoundedCornerShape(18.dp)
             )
         }
 
@@ -1112,9 +1222,11 @@ fun InteractiveBoard(
                             while (true) {
                                 val upEvent = awaitPointerEvent()
                                 val change = upEvent.changes.firstOrNull()
-                                if (change != null) {
+                                if (change == null || !change.pressed) {
+                                    if (change != null) finalUp = change
+                                    break
+                                } else {
                                     finalUp = change
-                                    if (!change.pressed) break
                                 }
                             }
                             val cellX = (finalUp.position.x / cellSize).toInt().coerceIn(0, 8)
@@ -1126,9 +1238,11 @@ fun InteractiveBoard(
                                 while (true) {
                                     val upEvent = awaitPointerEvent()
                                     val change = upEvent.changes.firstOrNull()
-                                    if (change != null) {
+                                    if (change == null || !change.pressed) {
+                                        if (change != null) finalUp = change
+                                        break
+                                    } else {
                                         finalUp = change
-                                        if (!change.pressed) break
                                     }
                                 }
                                 var closestWx = 0
@@ -1157,20 +1271,18 @@ fun InteractiveBoard(
                                 while (true) {
                                     val dragEvent = awaitPointerEvent()
                                     val change = dragEvent.changes.firstOrNull()
-                                    if (change != null) {
-                                        if (change.pressed) {
-                                            val dx = change.position.x - startX
-                                            val dy = change.position.y - startY
-                                            if (abs(dx) > 15f || abs(dy) > 15f) {
-                                                isHoriz = abs(dx) > abs(dy)
-                                            }
-                                            currentWx = (change.position.x / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
-                                            currentWy = (change.position.y / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
-                                            onDragWallPreview(currentWx, currentWy, isHoriz)
-                                        } else {
-                                            finalUp = change
-                                            break
+                                    if (change == null || !change.pressed) {
+                                        finalUp = change
+                                        break
+                                    } else {
+                                        val dx = change.position.x - startX
+                                        val dy = change.position.y - startY
+                                        if (abs(dx) > 15f || abs(dy) > 15f) {
+                                            isHoriz = abs(dx) > abs(dy)
                                         }
+                                        currentWx = (change.position.x / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
+                                        currentWy = (change.position.y / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
+                                        onDragWallPreview(currentWx, currentWy, isHoriz)
                                     }
                                 }
                                 if (finalUp != null) {
@@ -1186,38 +1298,39 @@ fun InteractiveBoard(
         val wallThickness = 7.dp.toPx()
         val pawnRadius = cellSize * 0.36f
 
-        // 1. Draw 9x9 board cells and grid lines
+        val p1GoalColor = Player1Color.copy(alpha = 0.08f)
+        val p2GoalColor = Player2Color.copy(alpha = 0.08f)
+        val gridLineColor = if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFD4C3A3)
+        val moveGlowColor = AccentGreen.copy(alpha = 0.22f)
+        val pawnShadowColor = Color.Black.copy(alpha = 0.2f)
+        val p1PawnHighlight = Color(0xFF60A5FA)
+        val p2PawnHighlight = Color(0xFFF87171)
+        val wallDotColor = WallColor.copy(alpha = 0.35f)
+
+        // 1. Draw goal rows (18 rects instead of 81)
         for (x in 0..8) {
-            for (y in 0..8) {
-                // Goal rows subtle highlight
-                if (y == 0) {
-                    drawRect(
-                        color = Player1Color.copy(alpha = 0.08f),
-                        topLeft = Offset(x * cellSize, y * cellSize),
-                        size = Size(cellSize, cellSize)
-                    )
-                } else if (y == 8) {
-                    drawRect(
-                        color = Player2Color.copy(alpha = 0.08f),
-                        topLeft = Offset(x * cellSize, y * cellSize),
-                        size = Size(cellSize, cellSize)
-                    )
-                }
-            }
+            drawRect(
+                color = p1GoalColor,
+                topLeft = Offset(x * cellSize, 0f),
+                size = Size(cellSize, cellSize)
+            )
+            drawRect(
+                color = p2GoalColor,
+                topLeft = Offset(x * cellSize, 8 * cellSize),
+                size = Size(cellSize, cellSize)
+            )
         }
 
         // Grid lines
         for (i in 1..8) {
-            // vertical line
             drawLine(
-                color = if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFD4C3A3),
+                color = gridLineColor,
                 start = Offset(i * cellSize, 0f),
                 end = Offset(i * cellSize, size.height),
                 strokeWidth = 2f
             )
-            // horizontal line
             drawLine(
-                color = if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFD4C3A3),
+                color = gridLineColor,
                 start = Offset(0f, i * cellSize),
                 end = Offset(size.width, i * cellSize),
                 strokeWidth = 2f
@@ -1226,9 +1339,8 @@ fun InteractiveBoard(
 
         // 2. Highlight Valid Moves
         for ((vx, vy) in validMoves) {
-            // Subtle glowing circle for valid move
             drawCircle(
-                color = AccentGreen.copy(alpha = 0.22f),
+                color = moveGlowColor,
                 radius = cellSize * 0.36f,
                 center = Offset(vx * cellSize + cellSize / 2f, vy * cellSize + cellSize / 2f)
             )
@@ -1265,7 +1377,7 @@ fun InteractiveBoard(
             gameState.player1.y * cellSize + cellSize / 2f
         )
         drawCircle(
-            color = Color.Black.copy(alpha = 0.2f),
+            color = pawnShadowColor,
             radius = pawnRadius + 2.dp.toPx(),
             center = p1Center + Offset(0f, 2.dp.toPx())
         )
@@ -1275,7 +1387,7 @@ fun InteractiveBoard(
             center = p1Center
         )
         drawCircle(
-            color = Color(0xFF60A5FA),
+            color = p1PawnHighlight,
             radius = pawnRadius * 0.45f,
             center = p1Center - Offset(pawnRadius * 0.25f, pawnRadius * 0.25f)
         )
@@ -1286,7 +1398,7 @@ fun InteractiveBoard(
             gameState.player2.y * cellSize + cellSize / 2f
         )
         drawCircle(
-            color = Color.Black.copy(alpha = 0.2f),
+            color = pawnShadowColor,
             radius = pawnRadius + 2.dp.toPx(),
             center = p2Center + Offset(0f, 2.dp.toPx())
         )
@@ -1296,7 +1408,7 @@ fun InteractiveBoard(
             center = p2Center
         )
         drawCircle(
-            color = Color(0xFFF87171),
+            color = p2PawnHighlight,
             radius = pawnRadius * 0.45f,
             center = p2Center - Offset(pawnRadius * 0.25f, pawnRadius * 0.25f)
         )
@@ -1371,7 +1483,7 @@ fun InteractiveBoard(
                         )
                     } else {
                         drawCircle(
-                            color = WallColor.copy(alpha = 0.35f),
+                            color = wallDotColor,
                             radius = 3.5.dp.toPx(),
                             center = Offset(interX, interY)
                         )

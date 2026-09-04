@@ -1,7 +1,9 @@
 package com.example
 
+import android.app.Application
+import android.content.Context
 import androidx.compose.ui.graphics.Color
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ui.theme.Player1Color
 import com.example.ui.theme.Player2Color
@@ -56,15 +58,36 @@ data class AppSettings(
     val darkTheme: Boolean = false
 )
 
-class GameViewModel : ViewModel() {
+class GameViewModel(application: Application) : AndroidViewModel(application) {
+    private val prefs = application.getSharedPreferences("blockpath_prefs", Context.MODE_PRIVATE)
+
     private val _gameState = MutableStateFlow(GameState())
     val gameState: StateFlow<GameState> = _gameState.asStateFlow()
 
-    private val _appSettings = MutableStateFlow(AppSettings())
+    private val _appSettings = MutableStateFlow(
+        AppSettings(
+            classicControls = prefs.getBoolean("classic_controls", true),
+            soundEnabled = prefs.getBoolean("sound_enabled", true),
+            darkTheme = prefs.getBoolean("dark_theme", false)
+        )
+    )
     val appSettings: StateFlow<AppSettings> = _appSettings.asStateFlow()
 
     fun updateSettings(settings: AppSettings) {
         _appSettings.value = settings
+        prefs.edit()
+            .putBoolean("classic_controls", settings.classicControls)
+            .putBoolean("sound_enabled", settings.soundEnabled)
+            .putBoolean("dark_theme", settings.darkTheme)
+            .apply()
+    }
+
+    fun isFirstTimeUser(): Boolean {
+        return prefs.getBoolean("is_first_launch_prompt_needed", true)
+    }
+
+    fun setFirstLaunchCompleted() {
+        prefs.edit().putBoolean("is_first_launch_prompt_needed", false).apply()
     }
 
     fun startGame(mode: GameMode, difficulty: AIDifficulty = AIDifficulty.MEDIUM) {
@@ -461,16 +484,19 @@ class GameViewModel : ViewModel() {
     }
 
     private fun isWallBetween(walls: List<Wall>, x1: Int, y1: Int, x2: Int, y2: Int): Boolean {
+        val wallCount = walls.size
         if (x1 == x2) {
-            val miny = Math.min(y1, y2)
-            for (w in walls) {
+            val miny = if (y1 < y2) y1 else y2
+            for (i in 0 until wallCount) {
+                val w = walls[i]
                 if (w.isHorizontal && w.y == miny && (w.x == x1 || w.x == x1 - 1)) {
                     return true
                 }
             }
         } else if (y1 == y2) {
-            val minx = Math.min(x1, x2)
-            for (w in walls) {
+            val minx = if (x1 < x2) x1 else x2
+            for (i in 0 until wallCount) {
+                val w = walls[i]
                 if (!w.isHorizontal && w.x == minx && (w.y == y1 || w.y == y1 - 1)) {
                     return true
                 }
@@ -484,29 +510,54 @@ class GameViewModel : ViewModel() {
     }
 
     fun shortestPathDistance(startX: Int, startY: Int, goalY: Int, walls: List<Wall>): Int {
-        val dist = Array(9) { IntArray(9) { Int.MAX_VALUE } }
-        val q: Queue<Pair<Int, Int>> = LinkedList()
+        if (startY == goalY) return 0
 
-        q.add(Pair(startX, startY))
-        dist[startX][startY] = 0
+        val dist = IntArray(81) { Int.MAX_VALUE }
+        val queue = IntArray(81)
+        var head = 0
+        var tail = 0
 
-        val dx = intArrayOf(0, 0, 1, -1)
-        val dy = intArrayOf(1, -1, 0, 0)
+        val startIdx = startX * 9 + startY
+        dist[startIdx] = 0
+        queue[tail++] = startIdx
 
-        while (q.isNotEmpty()) {
-            val node = q.poll() ?: continue
-            val (x, y) = node
-            val d = dist[x][y]
+        while (head < tail) {
+            val curr = queue[head++]
+            val x = curr / 9
+            val y = curr % 9
+            val d = dist[curr]
             if (y == goalY) return d
 
-            for (i in 0..3) {
-                val nx = x + dx[i]
-                val ny = y + dy[i]
-                if (nx in 0..8 && ny in 0..8 && dist[nx][ny] == Int.MAX_VALUE) {
-                    if (!isWallBetween(walls, x, y, nx, ny)) {
-                        dist[nx][ny] = d + 1
-                        q.add(Pair(nx, ny))
-                    }
+            // Down (y + 1)
+            if (y < 8) {
+                val next = curr + 1
+                if (dist[next] == Int.MAX_VALUE && !isWallBetween(walls, x, y, x, y + 1)) {
+                    dist[next] = d + 1
+                    queue[tail++] = next
+                }
+            }
+            // Up (y - 1)
+            if (y > 0) {
+                val next = curr - 1
+                if (dist[next] == Int.MAX_VALUE && !isWallBetween(walls, x, y, x, y - 1)) {
+                    dist[next] = d + 1
+                    queue[tail++] = next
+                }
+            }
+            // Right (x + 1)
+            if (x < 8) {
+                val next = curr + 9
+                if (dist[next] == Int.MAX_VALUE && !isWallBetween(walls, x, y, x + 1, y)) {
+                    dist[next] = d + 1
+                    queue[tail++] = next
+                }
+            }
+            // Left (x - 1)
+            if (x > 0) {
+                val next = curr - 9
+                if (dist[next] == Int.MAX_VALUE && !isWallBetween(walls, x, y, x - 1, y)) {
+                    dist[next] = d + 1
+                    queue[tail++] = next
                 }
             }
         }

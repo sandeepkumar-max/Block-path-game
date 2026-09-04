@@ -23,21 +23,31 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.AppSettingsDialog
 import com.example.ui.BlockPathLogo
 import com.example.ui.theme.*
 
 @Composable
 fun HomeScreen(
+    gameViewModel: GameViewModel,
     onStartPassAndPlay: () -> Unit,
     onStartVsAi: (AIDifficulty) -> Unit,
+    onStartTutorial: () -> Unit,
     onOpenAuth: () -> Unit
 ) {
+    val appSettings by gameViewModel.appSettings.collectAsState()
     var showRulesDialog by remember { mutableStateOf(false) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+
+    // First time user check
+    var showFirstTimeDialog by remember {
+        mutableStateOf(gameViewModel.isFirstTimeUser())
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = AppBackground
+        color = if (appSettings.darkTheme) Color(0xFF0F172A) else AppBackground
     ) {
         Column(
             modifier = Modifier
@@ -45,26 +55,54 @@ fun HomeScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 32.dp, vertical = 24.dp),
+                .padding(horizontal = 28.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            // Top Bar Row with Settings button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { showSettingsDialog = true },
+                    modifier = Modifier.testTag("home_settings_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings",
+                        tint = if (appSettings.darkTheme) Color.White else WallColor,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.weight(1f))
 
             BlockPathLogo(
-                size = 120.dp,
+                size = 110.dp,
                 elevation = 8.dp,
                 modifier = Modifier.testTag("app_game_logo")
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Text(
                 text = "BLOCKPATH",
-                fontSize = 36.sp,
+                fontSize = 34.sp,
                 fontWeight = FontWeight.Light,
-                color = WallColor,
+                color = if (appSettings.darkTheme) Color.White else WallColor,
                 letterSpacing = 4.sp
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = "Quoridor-style Strategy Duel",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF64748B)
             )
 
             Spacer(modifier = Modifier.weight(1f))
@@ -74,7 +112,7 @@ fun HomeScreen(
                 onClick = onStartPassAndPlay,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
+                    .height(54.dp)
                     .testTag("mode_pass_and_play"),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF1E293B), // Deep navy slate
@@ -96,19 +134,19 @@ fun HomeScreen(
                 Text(
                     text = "Local Multiplayer",
                     color = Color.White,
-                    fontSize = 18.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Button 2: vs Computer (AI Mode)
             Button(
                 onClick = { onStartVsAi(AIDifficulty.MEDIUM) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
+                    .height(54.dp)
                     .testTag("mode_vs_computer"),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF0284C7), // Vibrant sky blue
@@ -130,46 +168,88 @@ fun HomeScreen(
                 Text(
                     text = "vs Computer",
                     color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Button 3: How to Play (Rules)
-            Button(
-                onClick = { showRulesDialog = true },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .testTag("button_how_to_play"),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF475569), // Rich Slate
-                    contentColor = Color.White
-                ),
-                elevation = ButtonDefaults.buttonElevation(
-                    defaultElevation = 4.dp,
-                    pressedElevation = 2.dp
-                ),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.MenuBook,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = "How to Play",
-                    color = Color.White,
-                    fontSize = 18.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            // Row with Tutorial & Rules buttons (Compact side-by-side)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Interactive Tutorial
+                Button(
+                    onClick = onStartTutorial,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(46.dp)
+                        .testTag("button_interactive_tutorial"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF059669), // Rich Emerald Green
+                        contentColor = Color.White
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(
+                        defaultElevation = 3.dp,
+                        pressedElevation = 1.dp
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.School,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Tutorial",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                }
+
+                // Rules & Guide
+                Button(
+                    onClick = { showRulesDialog = true },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(46.dp)
+                        .testTag("button_how_to_play"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF475569), // Rich Slate
+                        contentColor = Color.White
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(
+                        defaultElevation = 3.dp,
+                        pressedElevation = 1.dp
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MenuBook,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Rules & Guide",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             TextButton(onClick = { showPrivacyDialog = true }) {
                 Text(
@@ -179,7 +259,102 @@ fun HomeScreen(
                     fontWeight = FontWeight.Medium
                 )
             }
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // First-Time User Welcome Dialog
+        if (showFirstTimeDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showFirstTimeDialog = false
+                    gameViewModel.setFirstLaunchCompleted()
+                },
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(54.dp)
+                            .background(Color(0xFFD1FAE5), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.School,
+                            contentDescription = null,
+                            tint = Color(0xFF059669),
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                },
+                title = {
+                    Text(
+                        text = "New to BlockPath?",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 21.sp,
+                        textAlign = TextAlign.Center
+                    )
+                },
+                text = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Welcome! Learn how to move your pawn, trap opponents with walls, and customize your game settings in a quick 1-minute interactive practice game!",
+                            fontSize = 14.sp,
+                            color = if (appSettings.darkTheme) Color(0xFFCBD5E1) else Color(0xFF334155),
+                            textAlign = TextAlign.Center,
+                            lineHeight = 20.sp
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Surface(
+                            color = if (appSettings.darkTheme) Color(0xFF1E293B) else Color(0xFFF1F5F9),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "💡 Hands-on preview: tap tiles, place walls & test controls live!",
+                                fontSize = 12.sp,
+                                color = Color(0xFF059669),
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showFirstTimeDialog = false
+                            gameViewModel.setFirstLaunchCompleted()
+                            onStartTutorial()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Start Interactive Tutorial (1 min)", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            showFirstTimeDialog = false
+                            gameViewModel.setFirstLaunchCompleted()
+                        }
+                    ) {
+                        Text("I Already Know Rules", color = Color.Gray)
+                    }
+                },
+                shape = RoundedCornerShape(16.dp)
+            )
+        }
+
+        if (showSettingsDialog) {
+            AppSettingsDialog(
+                appSettings = appSettings,
+                onSettingsChanged = { gameViewModel.updateSettings(it) },
+                onDismiss = { showSettingsDialog = false },
+                onReplayTutorial = {
+                    showSettingsDialog = false
+                    onStartTutorial()
+                }
+            )
         }
 
         if (showRulesDialog) {

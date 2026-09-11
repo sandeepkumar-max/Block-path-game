@@ -41,11 +41,44 @@ class MainActivity : ComponentActivity() {
                 gameViewModel.startGame(GameMode.VS_COMPUTER, difficulty)
                 navController.navigate("game")
               },
+              onStartOnlineGame = { opponentName, isRealPeer, ping ->
+                gameViewModel.startOnlineGame(
+                  opponentName = opponentName,
+                  isRealPeer = isRealPeer,
+                  ping = ping
+                )
+                navController.navigate("game")
+              },
               onStartTutorial = {
                 navController.navigate("tutorial")
               },
               onOpenAuth = {
                 navController.navigate("auth")
+              },
+              onOpenMultiplayer = {
+                navController.navigate("multiplayer")
+              }
+            )
+          }
+          composable("multiplayer") {
+            MultiplayerScreen(
+              gameViewModel = gameViewModel,
+              onBack = {
+                gameViewModel.peerJsWebRtcManager.cancelMatchmaking()
+                navController.popBackStack("home", inclusive = false)
+              },
+              onStartGame = { oppName, oppAvatar, isRealPeer, ping, isHost, timerEnabled ->
+                gameViewModel.startOnlineGame(
+                  opponentName = oppName,
+                  opponentAvatar = oppAvatar,
+                  isRealPeer = isRealPeer,
+                  ping = ping,
+                  isHost = isHost,
+                  timerEnabled = timerEnabled
+                )
+                navController.navigate("game") {
+                  launchSingleTop = true
+                }
               }
             )
           }
@@ -73,6 +106,7 @@ class MainActivity : ComponentActivity() {
             GameScreen(
               gameViewModel = gameViewModel,
               onBack = {
+                gameViewModel.quitCurrentGame()
                 navController.popBackStack("home", inclusive = false)
               }
             )

@@ -1,6 +1,6 @@
 package com.example.ui
 
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -15,7 +15,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.AppSettings
 import com.example.ui.theme.Player1Color
-import com.example.ui.theme.WallColor
 
 @Composable
 fun AppSettingsDialog(
@@ -26,6 +25,9 @@ fun AppSettingsDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        titleContentColor = Color(0xFF1E293B),
+        textContentColor = Color(0xFF334155),
         title = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -41,7 +43,8 @@ fun AppSettingsDialog(
                 Text(
                     text = "Game Settings",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp
+                    fontSize = 20.sp,
+                    color = Color(0xFF1E293B)
                 )
             }
         },
@@ -52,9 +55,9 @@ fun AppSettingsDialog(
             ) {
                 // 1. Classic Button Controls vs Drag
                 Surface(
-                    color = if (appSettings.darkTheme) Color(0xFF1E293B) else Color(0xFFF8FAFC),
+                    color = Color(0xFFF8FAFC),
                     shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
@@ -73,6 +76,7 @@ fun AppSettingsDialog(
                                 text = "Wall Button Controls",
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 15.sp,
+                                color = Color(0xFF1E293B),
                                 modifier = Modifier.weight(1f)
                             )
                             Switch(
@@ -87,7 +91,7 @@ fun AppSettingsDialog(
                             else
                                 "⚡ Active: Drag & Drop wall directly on the board",
                             fontSize = 12.sp,
-                            color = if (appSettings.darkTheme) Color(0xFF94A3B8) else Color(0xFF64748B),
+                            color = Color(0xFF64748B),
                             lineHeight = 16.sp
                         )
                     }
@@ -95,9 +99,9 @@ fun AppSettingsDialog(
 
                 // 2. Sound & Haptic Vibration
                 Surface(
-                    color = if (appSettings.darkTheme) Color(0xFF1E293B) else Color(0xFFF8FAFC),
+                    color = Color(0xFFF8FAFC),
                     shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -115,12 +119,13 @@ fun AppSettingsDialog(
                             Text(
                                 text = "Sound & Vibration",
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 15.sp
+                                fontSize = 15.sp,
+                                color = Color(0xFF1E293B)
                             )
                             Text(
                                 text = "Haptic feedback on moves and wins",
                                 fontSize = 12.sp,
-                                color = if (appSettings.darkTheme) Color(0xFF94A3B8) else Color(0xFF64748B)
+                                color = Color(0xFF64748B)
                             )
                         }
                         Switch(
@@ -130,11 +135,11 @@ fun AppSettingsDialog(
                     }
                 }
 
-                // 3. Dark Theme
+                // 3. Funny Meme Sound Effects
                 Surface(
-                    color = if (appSettings.darkTheme) Color(0xFF1E293B) else Color(0xFFF8FAFC),
+                    color = Color(0xFFF8FAFC),
                     shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -142,32 +147,72 @@ fun AppSettingsDialog(
                         modifier = Modifier.fillMaxWidth().padding(12.dp)
                     ) {
                         Icon(
-                            imageVector = if (appSettings.darkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
+                            imageVector = Icons.Default.Audiotrack,
                             contentDescription = null,
-                            tint = if (appSettings.darkTheme) Color(0xFFFACC15) else Color(0xFFD97706),
+                            tint = if (appSettings.memeSoundEnabled && appSettings.soundEnabled) Color(0xFFF59E0B) else Color.Gray,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Dark Mode",
+                                text = "Funny Meme Sound Effects",
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 15.sp
+                                fontSize = 15.sp,
+                                color = Color(0xFF1E293B)
                             )
                             Text(
-                                text = if (appSettings.darkTheme) "Dark board theme active" else "Classic cream wood theme",
+                                text = "Dramatic audio on brutal blocks & traps (1-2 per game)",
                                 fontSize = 12.sp,
-                                color = if (appSettings.darkTheme) Color(0xFF94A3B8) else Color(0xFF64748B)
+                                color = Color(0xFF64748B)
                             )
                         }
                         Switch(
-                            checked = appSettings.darkTheme,
-                            onCheckedChange = { onSettingsChanged(appSettings.copy(darkTheme = it)) }
+                            checked = appSettings.memeSoundEnabled,
+                            onCheckedChange = { onSettingsChanged(appSettings.copy(memeSoundEnabled = it)) },
+                            enabled = appSettings.soundEnabled
                         )
                     }
                 }
 
-                // 4. Replay Tutorial option if provided
+                // 4. Timing Option (10-Second Turn Countdown)
+                Surface(
+                    color = Color(0xFFF8FAFC),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = null,
+                            tint = if (appSettings.timingEnabled) Player1Color else Color.Gray,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Turn Timing (10s)",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp,
+                                color = Color(0xFF1E293B)
+                            )
+                            Text(
+                                text = "10-second countdown bar; auto-passes turn on timeout",
+                                fontSize = 12.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                        Switch(
+                            checked = appSettings.timingEnabled,
+                            onCheckedChange = { onSettingsChanged(appSettings.copy(timingEnabled = it)) }
+                        )
+                    }
+                }
+
+                // 5. Replay Tutorial option if provided
                 if (onReplayTutorial != null) {
                     OutlinedButton(
                         onClick = {

@@ -1,6 +1,7 @@
 package com.example
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -25,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.AppSettingsDialog
 import com.example.ui.BlockPathLogo
+import com.example.ui.ProfileDialog
 import com.example.ui.theme.*
 
 @Composable
@@ -32,13 +35,18 @@ fun HomeScreen(
     gameViewModel: GameViewModel,
     onStartPassAndPlay: () -> Unit,
     onStartVsAi: (AIDifficulty) -> Unit,
+    onStartOnlineGame: (opponentName: String, isRealPeer: Boolean, ping: Int) -> Unit,
     onStartTutorial: () -> Unit,
-    onOpenAuth: () -> Unit
+    onOpenAuth: () -> Unit,
+    onOpenMultiplayer: () -> Unit = {}
 ) {
     val appSettings by gameViewModel.appSettings.collectAsState()
+    val userProfile by gameViewModel.userProfile.collectAsState()
     var showRulesDialog by remember { mutableStateOf(false) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showOnlineMatchDialog by remember { mutableStateOf(false) }
+    var showProfileDialog by remember { mutableStateOf(false) }
 
     // First time user check
     var showFirstTimeDialog by remember {
@@ -59,12 +67,58 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Top Bar Row with Settings button
+            // Top Bar Row with Profile Chip and Settings button
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Profile Pill / Badge
+                Surface(
+                    color = if (appSettings.darkTheme) Color(0xFF1E293B) else Color.White,
+                    shape = RoundedCornerShape(20.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
+                    ),
+                    modifier = Modifier
+                        .clickable { showProfileDialog = true }
+                        .testTag("home_profile_pill")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .background(Color(0xFF6366F1), androidx.compose.foundation.shape.CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(userProfile.avatar, fontSize = 14.sp)
+                        }
+                        Text(
+                            text = userProfile.name,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = if (appSettings.darkTheme) Color.White else Color(0xFF1E293B)
+                        )
+                        Surface(
+                            color = Color(0xFF10B981).copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = "${userProfile.winRate}% W",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF10B981),
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+
                 IconButton(
                     onClick = { showSettingsDialog = true },
                     modifier = Modifier.testTag("home_settings_btn")
@@ -107,7 +161,54 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Button 1: Local Multiplayer (Pass & Play)
+            // Button 1: Online Multiplayer (WebRTC PeerJS Direct Duel & Custom Rooms)
+            Button(
+                onClick = onOpenMultiplayer,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .testTag("mode_online_multiplayer"),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF6366F1), // Vibrant Indigo
+                    contentColor = Color.White
+                ),
+                elevation = ButtonDefaults.buttonElevation(
+                    defaultElevation = 4.dp,
+                    pressedElevation = 2.dp
+                ),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Public,
+                    contentDescription = "Online",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Play Online",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Surface(
+                    color = Color.White.copy(alpha = 0.22f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        text = "Live 1v1",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Button 2: Local Multiplayer (Pass & Play)
             Button(
                 onClick = onStartPassAndPlay,
                 modifier = Modifier
@@ -141,7 +242,7 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Button 2: vs Computer (AI Mode)
+            // Button 3: vs Computer (AI Mode)
             Button(
                 onClick = { onStartVsAi(AIDifficulty.MEDIUM) },
                 modifier = Modifier
@@ -269,17 +370,18 @@ fun HomeScreen(
                     showFirstTimeDialog = false
                     gameViewModel.setFirstLaunchCompleted()
                 },
+                containerColor = if (appSettings.darkTheme) Color(0xFF1E293B) else Color.White,
                 icon = {
                     Box(
                         modifier = Modifier
                             .size(54.dp)
-                            .background(Color(0xFFD1FAE5), CircleShape),
+                            .background(if (appSettings.darkTheme) Color(0xFF064E3B) else Color(0xFFD1FAE5), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.School,
                             contentDescription = null,
-                            tint = Color(0xFF059669),
+                            tint = if (appSettings.darkTheme) Color(0xFF34D399) else Color(0xFF059669),
                             modifier = Modifier.size(32.dp)
                         )
                     }
@@ -289,6 +391,7 @@ fun HomeScreen(
                         text = "New to BlockPath?",
                         fontWeight = FontWeight.Bold,
                         fontSize = 21.sp,
+                        color = if (appSettings.darkTheme) Color.White else Color(0xFF0F172A),
                         textAlign = TextAlign.Center
                     )
                 },
@@ -296,24 +399,25 @@ fun HomeScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             text = "Welcome! Learn how to move your pawn, trap opponents with walls, and customize your game settings in a quick 1-minute interactive practice game!",
-                            fontSize = 14.sp,
-                            color = if (appSettings.darkTheme) Color(0xFFCBD5E1) else Color(0xFF334155),
+                            fontSize = 15.sp,
+                            color = if (appSettings.darkTheme) Color(0xFFE2E8F0) else Color(0xFF1E293B),
                             textAlign = TextAlign.Center,
-                            lineHeight = 20.sp
+                            lineHeight = 22.sp
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Surface(
-                            color = if (appSettings.darkTheme) Color(0xFF1E293B) else Color(0xFFF1F5F9),
+                            color = if (appSettings.darkTheme) Color(0xFF0F172A) else Color(0xFFECFDF5),
                             shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (appSettings.darkTheme) Color(0xFF064E3B) else Color(0xFFA7F3D0)),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
                                 text = "💡 Hands-on preview: tap tiles, place walls & test controls live!",
-                                fontSize = 12.sp,
-                                color = Color(0xFF059669),
+                                fontSize = 13.sp,
+                                color = if (appSettings.darkTheme) Color(0xFF34D399) else Color(0xFF047857),
                                 fontWeight = FontWeight.SemiBold,
                                 textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(8.dp)
+                                modifier = Modifier.padding(10.dp)
                             )
                         }
                     }
@@ -338,7 +442,11 @@ fun HomeScreen(
                             gameViewModel.setFirstLaunchCompleted()
                         }
                     ) {
-                        Text("I Already Know Rules", color = Color.Gray)
+                        Text(
+                            "I Already Know Rules",
+                            color = if (appSettings.darkTheme) Color(0xFF94A3B8) else Color(0xFF64748B),
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 },
                 shape = RoundedCornerShape(16.dp)
@@ -362,6 +470,28 @@ fun HomeScreen(
         }
         if (showPrivacyDialog) {
             PrivacyPolicyDialog(onDismiss = { showPrivacyDialog = false })
+        }
+        if (showOnlineMatchDialog) {
+            OnlineMatchmakingDialog(
+                gameViewModel = gameViewModel,
+                onDismiss = { showOnlineMatchDialog = false },
+                onGameStart = { opponentName, isRealPeer, ping ->
+                    onStartOnlineGame(opponentName, isRealPeer, ping)
+                }
+            )
+        }
+
+        if (showProfileDialog) {
+            ProfileDialog(
+                userProfile = userProfile,
+                onSaveProfile = { name, avatar ->
+                    gameViewModel.updateUserProfile(name, avatar)
+                },
+                onResetStats = {
+                    gameViewModel.resetUserStats()
+                },
+                onDismiss = { showProfileDialog = false }
+            )
         }
     }
 }
@@ -478,5 +608,226 @@ fun PrivacyPolicyDialog(onDismiss: () -> Unit) {
         },
         shape = RoundedCornerShape(16.dp),
         containerColor = Color.White
+    )
+}
+
+@Composable
+fun OnlineMatchmakingDialog(
+    gameViewModel: GameViewModel,
+    onDismiss: () -> Unit,
+    onGameStart: (opponentName: String, isRealPeer: Boolean, ping: Int) -> Unit
+) {
+    val matchmakingState by gameViewModel.peerJsWebRtcManager.matchmakingState.collectAsState()
+    val appSettings by gameViewModel.appSettings.collectAsState()
+
+    // Handle transition when matched
+    LaunchedEffect(matchmakingState) {
+        val state = matchmakingState
+        if (state is MatchmakingState.Matched) {
+            kotlinx.coroutines.delay(1000) // Brief delay to proudly display the matched opponent card!
+            onGameStart(state.opponentName, state.isRealPeer, state.ping)
+            onDismiss()
+        }
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "radar")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.82f,
+        targetValue = 1.22f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+
+    AlertDialog(
+        onDismissRequest = {
+            gameViewModel.peerJsWebRtcManager.cancelMatchmaking()
+            onDismiss()
+        },
+        title = null,
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                when (val state = matchmakingState) {
+                    is MatchmakingState.Searching -> {
+                        Box(
+                            modifier = Modifier
+                                .size(90.dp)
+                                .graphicsLayer {
+                                    scaleX = pulseScale
+                                    scaleY = pulseScale
+                                }
+                                .background(Color(0x1A6366F1), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .background(Color(0xFF6366F1), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Public,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Text(
+                            text = "Finding Opponent...",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (appSettings.darkTheme) Color.White else Color(0xFF0F172A)
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "Real-time Online Match",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF6366F1)
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Surface(
+                            color = if (appSettings.darkTheme) Color(0xFF1E293B) else Color(0xFFF1F5F9),
+                            shape = RoundedCornerShape(20.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFE2E8F0))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color(0xFF6366F1)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Searching: ${state.elapsedSeconds}s / 3s",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (appSettings.darkTheme) Color(0xFFCBD5E1) else Color(0xFF475569)
+                                )
+                            }
+                        }
+                    }
+                    is MatchmakingState.Matched -> {
+                        Box(
+                            modifier = Modifier
+                                .size(76.dp)
+                                .background(Color(0x2210B981), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = AccentGreen,
+                                modifier = Modifier.size(48.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "Opponent Found!",
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AccentGreen
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Surface(
+                            color = if (appSettings.darkTheme) Color(0xFF1E293B) else Color(0xFFF8FAFC),
+                            shape = RoundedCornerShape(14.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF10B981).copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .background(Player2Color, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Person,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = state.opponentName,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (appSettings.darkTheme) Color.White else Color(0xFF0F172A)
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .background(AccentGreen, CircleShape)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Online • ${state.ping}ms ping",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = AccentGreen
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "Launching Duel...",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                    else -> {}
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            if (matchmakingState !is MatchmakingState.Matched) {
+                TextButton(
+                    onClick = {
+                        gameViewModel.peerJsWebRtcManager.cancelMatchmaking()
+                        onDismiss()
+                    }
+                ) {
+                    Text("Cancel", color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        shape = RoundedCornerShape(20.dp),
+        containerColor = if (appSettings.darkTheme) Color(0xFF0F172A) else Color.White
     )
 }

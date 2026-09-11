@@ -5,9 +5,11 @@ import kotlin.math.sin
 
 import android.app.Activity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,10 +43,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.activity.compose.BackHandler
 import com.example.ui.AppSettingsDialog
 import com.example.ui.BlockPathLogo
 import com.example.ui.theme.*
@@ -54,6 +60,12 @@ import kotlinx.coroutines.launch
 enum class PlayerInteractionMode {
     MOVE_PAWN,
     PLACE_WALL
+}
+
+enum class SelectedAction {
+    MOVE_PAWN,
+    HORIZONTAL_WALL,
+    VERTICAL_WALL
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,6 +82,7 @@ fun GameScreen(
     val app = context.applicationContext as? BlockPathApplication
 
     var interactionMode by remember { mutableStateOf(PlayerInteractionMode.MOVE_PAWN) }
+    var activeAction by remember { mutableStateOf(SelectedAction.MOVE_PAWN) }
     var isWallHorizontal by remember { mutableStateOf(true) }
     var pendingWall by remember { mutableStateOf<Wall?>(null) }
     var wallValidationMsg by remember { mutableStateOf<String?>(null) }
@@ -77,6 +90,7 @@ fun GameScreen(
     var showRewardDialog by remember { mutableStateOf(false) }
     var showConfirmBackDialog by remember { mutableStateOf(false) }
     var showConfirmResetDialog by remember { mutableStateOf(false) }
+    var showConfirmForfeitDialog by remember { mutableStateOf(false) }
 
     var invalidCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val shakeOffset = remember { Animatable(0f) }
@@ -93,11 +107,29 @@ fun GameScreen(
         }
     }
 
-    // Reset interaction mode when player turn changes
+    // Reset interaction mode & action selection when player turn changes
     LaunchedEffect(gameState.currentPlayer) {
         pendingWall = null
         wallValidationMsg = null
+        activeAction = SelectedAction.MOVE_PAWN
         interactionMode = PlayerInteractionMode.MOVE_PAWN
+        isWallHorizontal = true
+    }
+
+    // 10-Second Turn Countdown Timer (managed centrally by ViewModel, auto-alternates between users)
+    val timerSecondsRemaining by gameViewModel.turnSecondsRemaining.collectAsState()
+
+    LaunchedEffect(Unit) {
+        gameViewModel.startTurnTimer()
+    }
+
+    // Haptic feedback when time expires or turn passes
+    LaunchedEffect(timerSecondsRemaining) {
+        if (timerSecondsRemaining <= 0.05f && appSettings.timingEnabled && gameState.winner == null) {
+            if (appSettings.soundEnabled) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+        }
     }
 
     // Celebratory haptic on win
@@ -111,6 +143,19 @@ fun GameScreen(
         gameViewModel.getValidMovesForCurrentPlayer()
     }
 
+    // Handle device/system back button
+    BackHandler(enabled = true) {
+        if (gameState.gameMode == GameMode.ONLINE && gameState.winner == null) {
+            // In online matches, always confirm before quitting to prevent accidental exits
+            showConfirmBackDialog = true
+        } else if (gameState.winner == null && (gameState.moveCount > 0 || gameState.walls.isNotEmpty())) {
+            showConfirmBackDialog = true
+        } else {
+            gameViewModel.quitCurrentGame()
+            onBack()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -118,10 +163,13 @@ fun GameScreen(
                 navigationIcon = {
                     IconButton(
                         onClick = {
-                            // If game has started (moves made or walls placed) and not finished, ask confirmation
-                            if (gameState.winner == null && (gameState.moveCount > 0 || gameState.walls.isNotEmpty())) {
+                            if (gameState.gameMode == GameMode.ONLINE && gameState.winner == null) {
+                                // In online matches, always confirm before quitting to prevent accidental exits
+                                showConfirmBackDialog = true
+                            } else if (gameState.winner == null && (gameState.moveCount > 0 || gameState.walls.isNotEmpty())) {
                                 showConfirmBackDialog = true
                             } else {
+                                gameViewModel.quitCurrentGame()
                                 onBack()
                             }
                         }
@@ -138,17 +186,37 @@ fun GameScreen(
                     }
                     IconButton(
                         onClick = {
-                            // If moves made or walls placed, ask confirmation before reset
-                            if (gameState.winner == null && (gameState.moveCount > 0 || gameState.walls.isNotEmpty())) {
-                                showConfirmResetDialog = true
+                            if (gameState.gameMode == GameMode.ONLINE) {
+                                if (gameState.winner == null) {
+                                    showConfirmForfeitDialog = true
+                                } else {
+                                    gameViewModel.requestOnlineRematch()
+                                }
                             } else {
-                                pendingWall = null
-                                gameViewModel.resetGame()
+                                // If moves made or walls placed, ask confirmation before reset
+                                if (gameState.winner == null && (gameState.moveCount > 0 || gameState.walls.isNotEmpty())) {
+                                    showConfirmResetDialog = true
+                                } else {
+                                    pendingWall = null
+                                    gameViewModel.resetGame()
+                                }
                             }
                         },
                         modifier = Modifier.testTag("reset_game_btn")
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Restart Game", tint = if (appSettings.darkTheme) Color.White else WallColor)
+                        if (gameState.gameMode == GameMode.ONLINE && gameState.winner == null) {
+                            Icon(
+                                imageVector = Icons.Default.Flag,
+                                contentDescription = "Surrender Match",
+                                tint = if (appSettings.darkTheme) Color.White else WallColor
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Restart Game",
+                                tint = if (appSettings.darkTheme) Color.White else WallColor
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = if (appSettings.darkTheme) Color(0xFF0F172A) else AppBackground)
@@ -156,14 +224,18 @@ fun GameScreen(
         },
         containerColor = if (appSettings.darkTheme) Color(0xFF0F172A) else AppBackground
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceEvenly
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceEvenly
+            ) {
             // Player 2 Area (Top - Rotated 180 for Pass & Play)
             if (gameState.gameMode == GameMode.LOCAL_PASS_AND_PLAY) {
                 Column(
@@ -172,53 +244,129 @@ fun GameScreen(
                         .graphicsLayer { rotationZ = 180f },
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    PlayerInfoBar(
+                        player = gameState.player2,
+                        name = "Player 2",
+                        avatar = "♜",
+                        isCurrentTurn = gameState.currentPlayer == 2
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
                     PlayerActionControls(
                         gameState = gameState,
                         playerNum = 2,
-                        interactionMode = interactionMode,
-                        isWallHorizontal = isWallHorizontal,
-                        pendingWall = pendingWall,
-                        wallValidationMsg = wallValidationMsg,
-                        appSettings = appSettings,
-                        onInteractionModeChange = { 
-                            interactionMode = it
-                            pendingWall = null
-                            wallValidationMsg = null
-                        },
-                        onOrientationChange = { horiz ->
-                            isWallHorizontal = horiz
-                            pendingWall?.let { w ->
-                                val candidate = w.copy(isHorizontal = horiz)
-                                pendingWall = candidate
-                                wallValidationMsg = gameViewModel.checkWallPlacement(gameState, candidate)
+                        activeAction = activeAction,
+                        onSelectAction = { action ->
+                            activeAction = action
+                            when (action) {
+                                SelectedAction.MOVE_PAWN -> {
+                                    interactionMode = PlayerInteractionMode.MOVE_PAWN
+                                    pendingWall = null
+                                    wallValidationMsg = null
+                                }
+                                SelectedAction.HORIZONTAL_WALL -> {
+                                    interactionMode = PlayerInteractionMode.PLACE_WALL
+                                    isWallHorizontal = true
+                                    pendingWall?.let { w ->
+                                        val candidate = w.copy(isHorizontal = true)
+                                        pendingWall = candidate
+                                        wallValidationMsg = gameViewModel.checkWallPlacement(gameState, candidate)
+                                    }
+                                }
+                                SelectedAction.VERTICAL_WALL -> {
+                                    interactionMode = PlayerInteractionMode.PLACE_WALL
+                                    isWallHorizontal = false
+                                    pendingWall?.let { w ->
+                                        val candidate = w.copy(isHorizontal = false)
+                                        pendingWall = candidate
+                                        wallValidationMsg = gameViewModel.checkWallPlacement(gameState, candidate)
+                                    }
+                                }
                             }
-                        },
-                        onConfirmWall = { w ->
-                            gameViewModel.handleAction(GameAction.PlaceWall(2, w))
-                            pendingWall = null
                         }
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    PlayerInfoClassic(player = gameState.player2, name = "Player 2")
                 }
             } else {
-                PlayerInfoClassic(player = gameState.player2, name = "AI")
+                val topPlayerNum = if (gameState.gameMode == GameMode.ONLINE && gameState.myPlayerNum == 2) 1 else 2
+                val topPlayer = if (topPlayerNum == 1) gameState.player1 else gameState.player2
+                val opponentDisplayName = if (gameState.gameMode == GameMode.ONLINE) gameState.opponentName else "AI"
+                val opponentTag = if (gameState.gameMode == GameMode.ONLINE) "🟢 Online (${gameState.opponentPing}ms)" else null
+                val topColorBadge = if (topPlayerNum == 1) "Blue" else "Red"
+                PlayerInfoBar(
+                    player = topPlayer,
+                    name = opponentDisplayName,
+                    avatar = gameState.opponentAvatar,
+                    isCurrentTurn = gameState.currentPlayer == topPlayerNum,
+                    colorBadge = topColorBadge,
+                    extraTag = opponentTag
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Turn Indicator & Timing Countdown Bar
+            TurnAndTimerBar(
+                gameState = gameState,
+                timingEnabled = if (gameState.gameMode == GameMode.ONLINE) gameState.isTimerEnabled else appSettings.timingEnabled,
+                timerSecondsRemaining = timerSecondsRemaining
+            )
+
+            // Real-time Action Notification Chip (when opponent moves or places a wall)
+            if (gameState.lastActionNotification != null && gameState.winner == null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Surface(
+                    color = Color(0xFFF1F5F9),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Color(0xFFCBD5E1))
+                ) {
+                    Text(
+                        text = gameState.lastActionNotification ?: "",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF334155),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Turn Indicator
-            Text(
-                text = if (gameState.winner != null) "Game Over" else if (gameState.isAiThinking) "AI Thinking..." else "Turn: ${if (gameState.currentPlayer == 1) "Player 1" else if (gameState.gameMode == GameMode.VS_COMPUTER) "AI" else "Player 2"}",
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                color = if (gameState.winner != null) AccentGreen else if (gameState.currentPlayer == 1) Player1Color else Player2Color
-            )
+            // Direction & Goal indicator (Clear player identity & orientation)
+            val isGuestPlayer = (gameState.gameMode == GameMode.ONLINE && gameState.myPlayerNum == 2)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val myPawnText = when (gameState.gameMode) {
+                    GameMode.ONLINE -> if (gameState.myPlayerNum == 1) "Your Pawn: Blue 🔵 (Bottom)" else "Your Pawn: Red 🔴 (Bottom)"
+                    GameMode.VS_COMPUTER -> "Your Pawn: Blue 🔵 (Bottom)"
+                    else -> null
+                }
+                if (myPawnText != null) {
+                    Text(
+                        text = myPawnText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isGuestPlayer) Player2Color else Player1Color
+                    )
+                } else {
+                    Spacer(modifier = Modifier.width(1.dp))
+                }
 
-            Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "🎯 GOAL: Reach Top Row ⬆️",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF10B981)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
 
             // Board Container
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
@@ -228,14 +376,24 @@ fun GameScreen(
                         clip = true
                         translationX = shakeOffset.value
                     }
-                    .background(if (appSettings.darkTheme) Color(0xFF1E293B) else BoardBackground, RoundedCornerShape(16.dp))
-                    .border(2.dp, if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFD4C3A3), RoundedCornerShape(16.dp))
+                    .background(BoardBackground, RoundedCornerShape(16.dp))
+                    .border(2.dp, Color(0xFFD4C3A3), RoundedCornerShape(16.dp))
                     .padding(8.dp)
                     .testTag("game_board_canvas")
             ) {
+                val boardInnerWidth = maxWidth
+                val boardInnerHeight = maxHeight
+                val cellSize = boardInnerWidth / 9f
+
+                val isMyTurnToAct = when (gameState.gameMode) {
+                    GameMode.ONLINE -> gameState.currentPlayer == gameState.myPlayerNum
+                    GameMode.VS_COMPUTER -> gameState.currentPlayer == 1 && !gameState.isAiThinking
+                    else -> !gameState.isAiThinking
+                }
+
                 InteractiveBoard(
                     gameState = gameState,
-                    validMoves = if (interactionMode == PlayerInteractionMode.MOVE_PAWN && !gameState.isAiThinking) validMoves else emptyList(),
+                    validMoves = if (interactionMode == PlayerInteractionMode.MOVE_PAWN && isMyTurnToAct) validMoves else emptyList(),
                     invalidCell = invalidCell,
                     invalidCellAlpha = invalidCellAlpha.value,
                     interactionMode = interactionMode,
@@ -243,8 +401,9 @@ fun GameScreen(
                     pendingWall = pendingWall,
                     wallValidationMsg = wallValidationMsg,
                     appSettings = appSettings,
+                    flipBoard = isGuestPlayer,
                     onCellClicked = { x, y ->
-                        if (gameState.winner != null || gameState.isAiThinking) return@InteractiveBoard
+                        if (gameState.winner != null || gameState.isAiThinking || (gameState.gameMode == GameMode.ONLINE && gameState.currentPlayer != gameState.myPlayerNum)) return@InteractiveBoard
                         if (interactionMode == PlayerInteractionMode.MOVE_PAWN) {
                             val isLegal = validMoves.any { it.first == x && it.second == y }
                             if (isLegal) {
@@ -272,7 +431,7 @@ fun GameScreen(
                         }
                     },
                     onWallIntersectionClicked = { wx, wy ->
-                        if (gameState.winner != null || gameState.isAiThinking) return@InteractiveBoard
+                        if (gameState.winner != null || gameState.isAiThinking || (gameState.gameMode == GameMode.ONLINE && gameState.currentPlayer != gameState.myPlayerNum)) return@InteractiveBoard
                         val currentWalls = if (gameState.currentPlayer == 1) gameState.player1.walls else gameState.player2.walls
                         if (currentWalls <= 0) {
                             wallValidationMsg = "No walls left!"
@@ -287,9 +446,11 @@ fun GameScreen(
                         }
                         pendingWall = candidate
                         wallValidationMsg = err
+                        interactionMode = PlayerInteractionMode.PLACE_WALL
+                        activeAction = if (isWallHorizontal) SelectedAction.HORIZONTAL_WALL else SelectedAction.VERTICAL_WALL
                     },
                     onDragWallPreview = { wx, wy, isHoriz ->
-                        if (gameState.winner != null || gameState.isAiThinking) return@InteractiveBoard
+                        if (gameState.winner != null || gameState.isAiThinking || (gameState.gameMode == GameMode.ONLINE && gameState.currentPlayer != gameState.myPlayerNum)) return@InteractiveBoard
                         val currentWalls = if (gameState.currentPlayer == 1) gameState.player1.walls else gameState.player2.walls
                         if (currentWalls <= 0) {
                             wallValidationMsg = "No walls left!"
@@ -299,9 +460,12 @@ fun GameScreen(
                         val err = gameViewModel.checkWallPlacement(gameState, candidate)
                         pendingWall = candidate
                         wallValidationMsg = err
+                        isWallHorizontal = isHoriz
+                        interactionMode = PlayerInteractionMode.PLACE_WALL
+                        activeAction = if (isHoriz) SelectedAction.HORIZONTAL_WALL else SelectedAction.VERTICAL_WALL
                     },
                     onConfirmDragWall = {
-                        if (gameState.winner != null || gameState.isAiThinking) return@InteractiveBoard
+                        if (gameState.winner != null || gameState.isAiThinking || (gameState.gameMode == GameMode.ONLINE && gameState.currentPlayer != gameState.myPlayerNum)) return@InteractiveBoard
                         val w = pendingWall
                         if (w != null && wallValidationMsg == null) {
                             if (appSettings.soundEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -351,41 +515,63 @@ fun GameScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
-            // Player 1 Area (Bottom - Normal)
-            PlayerInfoClassic(
-                player = gameState.player1,
-                name = "Player 1",
+            // User / Bottom Area
+            val bottomPlayerNum = if (gameState.gameMode == GameMode.ONLINE) gameState.myPlayerNum else 1
+            val bottomPlayer = if (bottomPlayerNum == 1) gameState.player1 else gameState.player2
+            val bottomLabel = if (gameState.gameMode == GameMode.ONLINE) {
+                "${if (bottomPlayerNum == 1) gameState.player1Name else gameState.player2Name} (You)"
+            } else if (gameState.gameMode == GameMode.VS_COMPUTER) {
+                "${gameState.player1Name} (You)"
+            } else {
+                gameState.player1Name
+            }
+            val bottomAvatar = if (bottomPlayerNum == 1) gameState.player1Avatar else gameState.player2Avatar
+            val bottomColorBadge = if (bottomPlayerNum == 1) "Blue (You)" else "Red (You)"
+
+            PlayerInfoBar(
+                player = bottomPlayer,
+                name = bottomLabel,
+                avatar = bottomAvatar,
+                isCurrentTurn = gameState.currentPlayer == bottomPlayerNum,
+                colorBadge = bottomColorBadge,
                 extraTag = if (gameState.hasUsedRewardedWalls) "• +2 Bonus Used" else null
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             
             PlayerActionControls(
                 gameState = gameState,
-                playerNum = 1,
-                interactionMode = interactionMode,
-                isWallHorizontal = isWallHorizontal,
-                pendingWall = pendingWall,
-                wallValidationMsg = wallValidationMsg,
-                appSettings = appSettings,
+                playerNum = bottomPlayerNum,
+                activeAction = activeAction,
                 onRequestRewardAd = { showRewardDialog = true },
-                onInteractionModeChange = { 
-                    interactionMode = it
-                    pendingWall = null
-                    wallValidationMsg = null
-                },
-                onOrientationChange = { horiz ->
-                    isWallHorizontal = horiz
-                    pendingWall?.let { w ->
-                        val candidate = w.copy(isHorizontal = horiz)
-                        pendingWall = candidate
-                        wallValidationMsg = gameViewModel.checkWallPlacement(gameState, candidate)
+                onSelectAction = { action ->
+                    activeAction = action
+                    when (action) {
+                        SelectedAction.MOVE_PAWN -> {
+                            interactionMode = PlayerInteractionMode.MOVE_PAWN
+                            pendingWall = null
+                            wallValidationMsg = null
+                        }
+                        SelectedAction.HORIZONTAL_WALL -> {
+                            interactionMode = PlayerInteractionMode.PLACE_WALL
+                            isWallHorizontal = true
+                            pendingWall?.let { w ->
+                                val candidate = w.copy(isHorizontal = true)
+                                pendingWall = candidate
+                                wallValidationMsg = gameViewModel.checkWallPlacement(gameState, candidate)
+                            }
+                        }
+                        SelectedAction.VERTICAL_WALL -> {
+                            interactionMode = PlayerInteractionMode.PLACE_WALL
+                            isWallHorizontal = false
+                            pendingWall?.let { w ->
+                                val candidate = w.copy(isHorizontal = false)
+                                pendingWall = candidate
+                                wallValidationMsg = gameViewModel.checkWallPlacement(gameState, candidate)
+                            }
+                        }
                     }
-                },
-                onConfirmWall = { w ->
-                    gameViewModel.handleAction(GameAction.PlaceWall(1, w))
-                    pendingWall = null
                 }
             )
 
@@ -439,6 +625,106 @@ fun GameScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
         }
+
+        // Active Player Wall Confirmation Overlay (Fixed, Absolute, Non-pushing)
+        val isCurrentPlayerHuman = when (gameState.gameMode) {
+            GameMode.LOCAL_PASS_AND_PLAY -> true
+            GameMode.ONLINE -> gameState.currentPlayer == gameState.myPlayerNum
+            else -> gameState.currentPlayer == 1
+        }
+        val isWallModeActive = !gameState.isAiThinking &&
+                gameState.winner == null &&
+                isCurrentPlayerHuman &&
+                (activeAction == SelectedAction.HORIZONTAL_WALL || activeAction == SelectedAction.VERTICAL_WALL)
+
+        val activeBottomPlayer = if (gameState.gameMode == GameMode.ONLINE) gameState.myPlayerNum else 1
+        val isBottomWallVisible = isWallModeActive && (
+            (gameState.gameMode == GameMode.ONLINE && gameState.currentPlayer == gameState.myPlayerNum) ||
+            (gameState.gameMode != GameMode.ONLINE && gameState.currentPlayer == 1)
+        )
+
+        // Overlay for Bottom Player
+        AnimatedVisibility(
+            visible = isBottomWallVisible,
+            enter = fadeIn(tween(140)) + slideInVertically(tween(140)) { it / 2 },
+            exit = fadeOut(tween(100)) + slideOutVertically(tween(100)) { it / 2 },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(start = 14.dp, end = 14.dp, bottom = 6.dp)
+        ) {
+            WallConfirmationOverlay(
+                isWallHorizontal = isWallHorizontal,
+                pendingWall = pendingWall,
+                wallValidationMsg = wallValidationMsg,
+                playerNum = activeBottomPlayer,
+                isRotated = false,
+                onToggleOrientation = { isHoriz ->
+                    isWallHorizontal = isHoriz
+                    activeAction = if (isHoriz) SelectedAction.HORIZONTAL_WALL else SelectedAction.VERTICAL_WALL
+                    pendingWall?.let { w ->
+                        val candidate = w.copy(isHorizontal = isHoriz)
+                        pendingWall = candidate
+                        wallValidationMsg = gameViewModel.checkWallPlacement(gameState, candidate)
+                    }
+                },
+                onConfirm = { w ->
+                    if (appSettings.soundEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    gameViewModel.handleAction(GameAction.PlaceWall(activeBottomPlayer, w))
+                    pendingWall = null
+                    wallValidationMsg = null
+                    activeAction = SelectedAction.MOVE_PAWN
+                    interactionMode = PlayerInteractionMode.MOVE_PAWN
+                },
+                onCancel = {
+                    pendingWall = null
+                    wallValidationMsg = null
+                    activeAction = SelectedAction.MOVE_PAWN
+                    interactionMode = PlayerInteractionMode.MOVE_PAWN
+                }
+            )
+        }
+
+        // Overlay for Player 2 (Top, Local Pass & Play only)
+        AnimatedVisibility(
+            visible = isWallModeActive && gameState.currentPlayer == 2 && gameState.gameMode == GameMode.LOCAL_PASS_AND_PLAY,
+            enter = fadeIn(tween(140)) + slideInVertically(tween(140)) { -it / 2 },
+            exit = fadeOut(tween(100)) + slideOutVertically(tween(100)) { -it / 2 },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(start = 14.dp, end = 14.dp, top = 6.dp)
+        ) {
+            WallConfirmationOverlay(
+                isWallHorizontal = isWallHorizontal,
+                pendingWall = pendingWall,
+                wallValidationMsg = wallValidationMsg,
+                playerNum = 2,
+                isRotated = true,
+                onToggleOrientation = { isHoriz ->
+                    isWallHorizontal = isHoriz
+                    activeAction = if (isHoriz) SelectedAction.HORIZONTAL_WALL else SelectedAction.VERTICAL_WALL
+                    pendingWall?.let { w ->
+                        val candidate = w.copy(isHorizontal = isHoriz)
+                        pendingWall = candidate
+                        wallValidationMsg = gameViewModel.checkWallPlacement(gameState, candidate)
+                    }
+                },
+                onConfirm = { w ->
+                    if (appSettings.soundEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    gameViewModel.handleAction(GameAction.PlaceWall(2, w))
+                    pendingWall = null
+                    wallValidationMsg = null
+                    activeAction = SelectedAction.MOVE_PAWN
+                    interactionMode = PlayerInteractionMode.MOVE_PAWN
+                },
+                onCancel = {
+                    pendingWall = null
+                    wallValidationMsg = null
+                    activeAction = SelectedAction.MOVE_PAWN
+                    interactionMode = PlayerInteractionMode.MOVE_PAWN
+                }
+            )
+        }
+    }
 
         if (showRewardDialog) {
             AlertDialog(
@@ -537,7 +823,7 @@ fun GameScreen(
                 },
                 title = {
                     Text(
-                        text = "Leave Current Game?",
+                        text = if (gameState.gameMode == GameMode.ONLINE) "Quit Online Match?" else "Leave Current Game?",
                         fontWeight = FontWeight.Bold,
                         fontSize = 20.sp,
                         textAlign = TextAlign.Center
@@ -545,7 +831,11 @@ fun GameScreen(
                 },
                 text = {
                     Text(
-                        text = "A match is currently in progress. If you go back to the menu, your current game progress will be lost.\n\nAre you sure you want to quit?",
+                        text = if (gameState.gameMode == GameMode.ONLINE) {
+                            "You are currently in an active online match. If you quit, you will disconnect from the opponent and forfeit the match.\n\nAre you sure you want to quit?"
+                        } else {
+                            "A match is currently in progress. If you go back to the menu, your current game progress will be lost.\n\nAre you sure you want to quit?"
+                        },
                         fontSize = 14.sp,
                         color = if (appSettings.darkTheme) Color(0xFFCBD5E1) else Color(0xFF475569),
                         textAlign = TextAlign.Center,
@@ -556,6 +846,7 @@ fun GameScreen(
                     Button(
                         onClick = {
                             showConfirmBackDialog = false
+                            gameViewModel.quitCurrentGame()
                             onBack()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
@@ -570,6 +861,67 @@ fun GameScreen(
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text("Continue Playing", color = if (appSettings.darkTheme) Color.White else Color(0xFF334155))
+                    }
+                },
+                shape = RoundedCornerShape(18.dp)
+            )
+        }
+
+        // Confirmation Dialog: Surrender Online Match
+        if (showConfirmForfeitDialog) {
+            AlertDialog(
+                onDismissRequest = { showConfirmForfeitDialog = false },
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .background(Color(0xFFFEE2E2), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Flag,
+                            contentDescription = null,
+                            tint = ErrorRed,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                },
+                title = {
+                    Text(
+                        text = "Surrender Match?",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        textAlign = TextAlign.Center
+                    )
+                },
+                text = {
+                    Text(
+                        text = "In an online match, you cannot restart the board while your opponent is actively playing.\n\nSurrendering will award the victory to your opponent and exit this match. Do you want to forfeit and leave?",
+                        fontSize = 14.sp,
+                        color = if (appSettings.darkTheme) Color(0xFFCBD5E1) else Color(0xFF475569),
+                        textAlign = TextAlign.Center,
+                        lineHeight = 20.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showConfirmForfeitDialog = false
+                            gameViewModel.quitCurrentGame()
+                            onBack()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Surrender & Exit", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = { showConfirmForfeitDialog = false },
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Keep Playing", color = if (appSettings.darkTheme) Color.White else Color(0xFF334155))
                     }
                 },
                 shape = RoundedCornerShape(18.dp)
@@ -642,15 +994,31 @@ fun GameScreen(
         if (gameState.winner != null) {
             VictoryCelebrationDialog(
                 winner = gameState.winner!!,
+                myPlayerNum = gameState.myPlayerNum,
                 gameMode = gameState.gameMode,
                 moveCount = gameState.moveCount,
+                opponentName = gameState.opponentName,
+                rematchRequestedByMe = gameState.rematchRequestedByMe,
+                rematchRequestedByOpponent = gameState.rematchRequestedByOpponent,
+                isRealPeerConnected = gameState.isRealPeerConnected,
+                roundsPlayed = gameState.roundsPlayed,
+                myWins = gameState.myWins,
+                opponentWins = gameState.opponentWins,
+                roomCode = gameState.roomCode,
                 onPlayAgain = {
-                    gameViewModel.resetGame()
-                    interactionMode = PlayerInteractionMode.MOVE_PAWN
-                    pendingWall = null
-                    wallValidationMsg = null
+                    if (gameState.gameMode == GameMode.ONLINE) {
+                        gameViewModel.requestOnlineRematch()
+                    } else {
+                        gameViewModel.resetGame()
+                        interactionMode = PlayerInteractionMode.MOVE_PAWN
+                        pendingWall = null
+                        wallValidationMsg = null
+                    }
                 },
-                onMenu = onBack
+                onMenu = {
+                    gameViewModel.quitCurrentGame()
+                    onBack()
+                }
             )
         }
     }
@@ -674,6 +1042,262 @@ fun PlayerInfoClassic(
     }
 }
 
+@Composable
+fun PlayerInfoBar(
+    player: Player,
+    name: String,
+    avatar: String? = null,
+    isCurrentTurn: Boolean,
+    colorBadge: String? = null,
+    extraTag: String? = null,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = if (isCurrentTurn) player.color.copy(alpha = 0.08f) else Color(0xFFF8FAFC),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(
+            width = if (isCurrentTurn) 1.5.dp else 1.dp,
+            color = if (isCurrentTurn) player.color else Color(0xFFE2E8F0)
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(36.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Left: Player avatar + Name + Color Badge + Active Turn Dot
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .background(player.color, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (avatar != null) {
+                        Text(
+                            text = avatar,
+                            fontSize = 13.sp
+                        )
+                    } else {
+                        Text(
+                            text = "P${player.id}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+
+                Text(
+                    text = name,
+                    fontWeight = if (isCurrentTurn) FontWeight.Bold else FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    color = if (isCurrentTurn) player.color else Color(0xFF1E293B)
+                )
+
+                if (colorBadge != null) {
+                    Surface(
+                        color = player.color.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(1.dp, player.color.copy(alpha = 0.35f))
+                    ) {
+                        Text(
+                            text = colorBadge,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = player.color,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+
+                if (isCurrentTurn) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .background(player.color, CircleShape)
+                    )
+                }
+
+                if (extraTag != null) {
+                    Text(
+                        text = extraTag,
+                        fontSize = 10.sp,
+                        color = Color(0xFFD97706),
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            // Right: Essential Wall Count Badge
+            Surface(
+                color = when {
+                    player.walls > 2 -> Color(0xFFE2E8F0)
+                    player.walls in 1..2 -> Color(0xFFFEF3C7)
+                    else -> Color(0xFFFEE2E2)
+                },
+                shape = RoundedCornerShape(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text(text = "🧱", fontSize = 11.sp)
+                    Text(
+                        text = "${player.walls} walls",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = when {
+                            player.walls > 2 -> Color(0xFF334155)
+                            player.walls in 1..2 -> Color(0xFF92400E)
+                            else -> Color(0xFFDC2626)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TurnAndTimerBar(
+    gameState: GameState,
+    timingEnabled: Boolean,
+    timerSecondsRemaining: Float,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color(0xFFF8FAFC),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                val isMyTurnInOnline = (gameState.gameMode == GameMode.ONLINE && gameState.currentPlayer == gameState.myPlayerNum)
+                val myColorName = if (gameState.myPlayerNum == 1) "Blue 🔵" else "Red 🔴"
+                val oppColorName = if (gameState.myPlayerNum == 1) "Red 🔴" else "Blue 🔵"
+
+                val turnText = if (gameState.winner != null) {
+                    "Game Over"
+                } else if (gameState.isAiThinking) {
+                    if (gameState.gameMode == GameMode.ONLINE) "${gameState.opponentName} is thinking..." else "AI Thinking..."
+                } else {
+                    if (gameState.gameMode == GameMode.ONLINE) {
+                        if (isMyTurnInOnline) "Your Turn ($myColorName)" else "${gameState.opponentName}'s Turn ($oppColorName)"
+                    } else if (gameState.gameMode == GameMode.VS_COMPUTER) {
+                        if (gameState.currentPlayer == 1) "Your Turn (Blue 🔵)" else "AI's Turn (Red 🔴)"
+                    } else {
+                        if (gameState.currentPlayer == 1) "Player 1's Turn (Blue 🔵)" else "Player 2's Turn (Red 🔴)"
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(
+                                color = if (gameState.winner != null) AccentGreen 
+                                        else if (gameState.currentPlayer == 1) Player1Color 
+                                        else Player2Color,
+                                shape = CircleShape
+                            )
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = turnText,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = if (gameState.winner != null) AccentGreen 
+                                else if (gameState.currentPlayer == 1) Player1Color 
+                                else Player2Color
+                    )
+                }
+
+                if (timingEnabled && gameState.winner == null) {
+                    val timerColor = when {
+                        timerSecondsRemaining > 5f -> Color(0xFF10B981)
+                        timerSecondsRemaining > 2.5f -> Color(0xFFF59E0B)
+                        else -> Color(0xFFEF4444)
+                    }
+                    val roundedSec = kotlin.math.ceil(timerSecondsRemaining).toInt().coerceIn(0, 10)
+                    Surface(
+                        color = timerColor.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, timerColor.copy(alpha = 0.3f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "⏱ ${roundedSec}s",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = timerColor
+                            )
+                        }
+                    }
+                } else if (!timingEnabled && gameState.gameMode == GameMode.ONLINE && gameState.winner == null) {
+                    Surface(
+                        color = Color(0xFFF1F5F9),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Relaxed (Timer Off)",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (timingEnabled && gameState.winner == null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                val timerFraction = (timerSecondsRemaining / 10f).coerceIn(0f, 1f)
+                val barColor = when {
+                    timerSecondsRemaining > 5f -> Color(0xFF10B981)
+                    timerSecondsRemaining > 2.5f -> Color(0xFFF59E0B)
+                    else -> Color(0xFFEF4444)
+                }
+                LinearProgressIndicator(
+                    progress = { timerFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp),
+                    color = barColor,
+                    trackColor = Color(0xFFE2E8F0),
+                    strokeCap = StrokeCap.Round
+                )
+            }
+        }
+    }
+}
+
 private data class ConfettiParticle(
     val xRatio: Float,
     val speed: Float,
@@ -685,8 +1309,17 @@ private data class ConfettiParticle(
 @Composable
 fun VictoryCelebrationDialog(
     winner: Int,
+    myPlayerNum: Int = 1,
     gameMode: GameMode,
     moveCount: Int,
+    opponentName: String = "Opponent",
+    rematchRequestedByMe: Boolean = false,
+    rematchRequestedByOpponent: Boolean = false,
+    isRealPeerConnected: Boolean = true,
+    roundsPlayed: Int = 1,
+    myWins: Int = 0,
+    opponentWins: Int = 0,
+    roomCode: String? = null,
     onPlayAgain: () -> Unit,
     onMenu: () -> Unit
 ) {
@@ -732,13 +1365,18 @@ fun VictoryCelebrationDialog(
         label = "confetti"
     )
 
-    val winnerColor = if (winner == 1) Player1Color else Player2Color
-    val winnerName = if (winner == 1) {
-        "Player 1 Wins!"
-    } else if (gameMode == GameMode.VS_COMPUTER) {
-        "Computer AI Wins!"
+    val isMe = if (gameMode == GameMode.ONLINE) {
+        winner == myPlayerNum
     } else {
-        "Player 2 Wins!"
+        winner == 1
+    }
+    val winnerColor = if (winner == 1) Player1Color else Player2Color
+    val winnerName = if (gameMode == GameMode.ONLINE) {
+        if (isMe) "You Win! 🏆" else "$opponentName Wins!"
+    } else if (gameMode == GameMode.VS_COMPUTER) {
+        if (winner == 1) "You Win! 🏆" else "Computer AI Wins!"
+    } else {
+        if (winner == 1) "Player 1 Wins!" else "Player 2 Wins!"
     }
 
     val particles = remember {
@@ -912,21 +1550,152 @@ fun VictoryCelebrationDialog(
                         fontWeight = FontWeight.Medium
                     )
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    if (gameMode == GameMode.ONLINE) {
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Match Round and Series Score Chip
+                        Surface(
+                            color = Color(0xFFF1F5F9),
+                            shape = RoundedCornerShape(10.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Round $roundsPlayed",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF475569)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "•",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF94A3B8)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Score: You $myWins - $opponentWins $opponentName",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E293B)
+                                )
+                                if (roomCode != null) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "• Room: $roomCode",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Status notification card for Rematch
+                        if (!isRealPeerConnected) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                color = Color(0xFFFEF2F2),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFECACA))
+                            ) {
+                                Text(
+                                    text = "🚪 $opponentName left the room",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFFB91C1C),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        } else if (rematchRequestedByOpponent && !rematchRequestedByMe) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                color = Color(0xFFF0FDF4),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBBF7D0))
+                            ) {
+                                Text(
+                                    text = "🔥 $opponentName wants a rematch! Tap to accept!",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF15803D),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        } else if (rematchRequestedByMe && !rematchRequestedByOpponent) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                color = Color(0xFFEFF6FF),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(12.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color(0xFF2563EB)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Rematch requested! Waiting for $opponentName...",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF1D4ED8)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(20.dp))
 
                     // Action Buttons
+                    val isPlayAgainEnabled = if (gameMode == GameMode.ONLINE) {
+                        isRealPeerConnected && !rematchRequestedByMe
+                    } else {
+                        true
+                    }
+
+                    val playAgainButtonText = when {
+                        gameMode == GameMode.ONLINE && !isRealPeerConnected -> "Opponent Left Match"
+                        gameMode == GameMode.ONLINE && rematchRequestedByMe && !rematchRequestedByOpponent -> "Waiting for $opponentName..."
+                        gameMode == GameMode.ONLINE && rematchRequestedByOpponent -> "Accept Rematch! 🔥"
+                        gameMode == GameMode.ONLINE -> "Play Again (Rematch) 🔄"
+                        else -> "Play Again"
+                    }
+
                     Button(
                         onClick = onPlayAgain,
+                        enabled = isPlayAgainEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)
                             .testTag("play_again_btn"),
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AccentGreen,
+                            disabledContainerColor = if (rematchRequestedByMe && isRealPeerConnected) Color(0xFF3B82F6) else Color(0xFFCBD5E1),
+                            disabledContentColor = if (rematchRequestedByMe && isRealPeerConnected) Color.White else Color(0xFF94A3B8)
+                        ),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.White)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Play Again", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        if (rematchRequestedByMe && isRealPeerConnected && !rematchRequestedByOpponent) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text(playAgainButtonText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -951,238 +1720,358 @@ fun VictoryCelebrationDialog(
 }
 
 @Composable
-fun PlayerActionControls(
-    gameState: GameState,
-    playerNum: Int,
-    interactionMode: PlayerInteractionMode,
+fun WallConfirmationOverlay(
     isWallHorizontal: Boolean,
     pendingWall: Wall?,
     wallValidationMsg: String?,
-    appSettings: AppSettings,
+    playerNum: Int,
+    isRotated: Boolean,
+    onToggleOrientation: (Boolean) -> Unit,
+    onConfirm: (Wall) -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .shadow(12.dp, RoundedCornerShape(16.dp))
+            .graphicsLayer {
+                if (isRotated) {
+                    rotationZ = 180f
+                }
+            },
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // Row 1: Line orientation toggles + Status/Hint
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Orientation selector
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Horizontal toggle button
+                    Surface(
+                        onClick = { onToggleOrientation(true) },
+                        color = if (isWallHorizontal) Color(0xFFEA580C) else Color(0xFFF1F5F9),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, if (isWallHorizontal) Color(0xFFEA580C) else Color(0xFFCBD5E1)),
+                        modifier = Modifier
+                            .height(30.dp)
+                            .testTag(if (playerNum == 1) "horizontal_wall_btn_p1" else "horizontal_wall_btn_p2")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 12.dp, height = 3.5.dp)
+                                    .background(
+                                        color = if (isWallHorizontal) Color.White else Color(0xFFEA580C),
+                                        shape = RoundedCornerShape(2.dp)
+                                    )
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Horiz ━",
+                                fontSize = 11.sp,
+                                fontWeight = if (isWallHorizontal) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isWallHorizontal) Color.White else Color(0xFF334155)
+                            )
+                        }
+                    }
+
+                    // Vertical toggle button
+                    Surface(
+                        onClick = { onToggleOrientation(false) },
+                        color = if (!isWallHorizontal) Color(0xFFEA580C) else Color(0xFFF1F5F9),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, if (!isWallHorizontal) Color(0xFFEA580C) else Color(0xFFCBD5E1)),
+                        modifier = Modifier
+                            .height(30.dp)
+                            .testTag(if (playerNum == 1) "vertical_wall_btn_p1" else "vertical_wall_btn_p2")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 3.5.dp, height = 12.dp)
+                                    .background(
+                                        color = if (!isWallHorizontal) Color.White else Color(0xFFEA580C),
+                                        shape = RoundedCornerShape(2.dp)
+                                    )
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Vert ┃",
+                                fontSize = 11.sp,
+                                fontWeight = if (!isWallHorizontal) FontWeight.Bold else FontWeight.Medium,
+                                color = if (!isWallHorizontal) Color.White else Color(0xFF334155)
+                            )
+                        }
+                    }
+                }
+
+                // Hint or Wall status
+                if (pendingWall == null) {
+                    Text(
+                        text = "Tap grid to place",
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B),
+                        fontWeight = FontWeight.Medium
+                    )
+                } else if (wallValidationMsg == null) {
+                    Text(
+                        text = "✓ Position valid",
+                        fontSize = 11.sp,
+                        color = AccentGreen,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // If error validation message, show clear warning pill
+            if (pendingWall != null && wallValidationMsg != null) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFFEE2E2),
+                    border = BorderStroke(1.dp, ErrorRed),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(28.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = ErrorRed,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = wallValidationMsg,
+                            color = ErrorRed,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            // Row 2: Action buttons (Confirm Wall & Cancel)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Confirm Wall button
+                val canConfirm = pendingWall != null && wallValidationMsg == null
+                Button(
+                    onClick = { pendingWall?.let { onConfirm(it) } },
+                    enabled = canConfirm,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AccentGreen,
+                        contentColor = Color.White,
+                        disabledContainerColor = Color(0xFFE2E8F0),
+                        disabledContentColor = Color(0xFF94A3B8)
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = if (canConfirm) 3.dp else 0.dp),
+                    modifier = Modifier
+                        .weight(1.3f)
+                        .height(38.dp)
+                        .testTag("confirm_wall_btn"),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Confirm",
+                        modifier = Modifier.size(17.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "Confirm Wall",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+
+                // Cancel button
+                OutlinedButton(
+                    onClick = onCancel,
+                    border = BorderStroke(1.2.dp, ErrorRed),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ErrorRed),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .weight(0.9f)
+                        .height(38.dp)
+                        .testTag("cancel_wall_btn"),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Cancel",
+                        tint = ErrorRed,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Cancel",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = ErrorRed
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlayerActionControls(
+    gameState: GameState,
+    playerNum: Int,
+    activeAction: SelectedAction,
+    onSelectAction: (SelectedAction) -> Unit,
     onRequestRewardAd: (() -> Unit)? = null,
-    onInteractionModeChange: (PlayerInteractionMode) -> Unit,
-    onOrientationChange: (Boolean) -> Unit,
-    onConfirmWall: (Wall) -> Unit
+    modifier: Modifier = Modifier
 ) {
     val isMyTurn = gameState.currentPlayer == playerNum
     val currentWalls = if (playerNum == 1) gameState.player1.walls else gameState.player2.walls
-    val alpha = if (isMyTurn) 1f else 0.4f
+    val alpha = if (isMyTurn && !gameState.isAiThinking && gameState.winner == null) 1f else 0.45f
     val canWatchAdForWalls = (playerNum == 1 &&
             gameState.gameMode == GameMode.VS_COMPUTER &&
             currentWalls <= 0 &&
             !gameState.hasUsedRewardedWalls)
 
-    Column(
-        modifier = Modifier
+    val isMoveActive = isMyTurn && !gameState.isAiThinking && gameState.winner == null && (activeAction == SelectedAction.MOVE_PAWN)
+    val isWallActive = isMyTurn && !gameState.isAiThinking && gameState.winner == null &&
+            (activeAction == SelectedAction.HORIZONTAL_WALL || activeAction == SelectedAction.VERTICAL_WALL)
+    val wallColorActive = Color(0xFFEA580C)
+
+    Row(
+        modifier = modifier
             .fillMaxWidth()
+            .height(48.dp)
             .graphicsLayer { this.alpha = alpha },
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        // 1. Move Pawn Button (Prominent, weight 1.4f)
+        Button(
+            onClick = { onSelectAction(SelectedAction.MOVE_PAWN) },
+            modifier = Modifier
+                .weight(1.4f)
+                .fillMaxHeight()
+                .testTag(if (playerNum == 1) "move_pawn_btn" else "move_pawn_btn_p2"),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isMoveActive) WallColor else Color(0xFFF8FAFC),
+                contentColor = if (isMoveActive) Color.White else Color(0xFF334155),
+                disabledContainerColor = Color(0xFFF1F5F9),
+                disabledContentColor = Color(0xFF94A3B8)
+            ),
+            shape = RoundedCornerShape(12.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = if (isMoveActive) 3.dp else 0.dp),
+            border = if (!isMoveActive) BorderStroke(1.dp, Color(0xFFCBD5E1)) else null,
+            contentPadding = PaddingValues(horizontal = 8.dp),
+            enabled = isMyTurn && !gameState.isAiThinking && gameState.winner == null
         ) {
-            Button(
-                onClick = { onInteractionModeChange(PlayerInteractionMode.MOVE_PAWN) },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (interactionMode == PlayerInteractionMode.MOVE_PAWN) WallColor else Color(0xFFE2E8F0),
-                    contentColor = if (interactionMode == PlayerInteractionMode.MOVE_PAWN) Color.White else Color(0xFF334155)
-                ),
-                shape = RoundedCornerShape(12.dp),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = if (interactionMode == PlayerInteractionMode.MOVE_PAWN) 3.dp else 0.dp),
-                enabled = isMyTurn && !gameState.isAiThinking && gameState.winner == null
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "Move Pawn",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
+                    text = "♟",
+                    fontSize = 17.sp,
+                    color = if (isMoveActive) Color.White else WallColor
                 )
-            }
-
-            Button(
-                onClick = {
-                    if (canWatchAdForWalls) {
-                        onRequestRewardAd?.invoke()
-                    } else {
-                        onInteractionModeChange(PlayerInteractionMode.PLACE_WALL)
-                    }
-                },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (canWatchAdForWalls) Color(0xFFD97706)
-                        else if (interactionMode == PlayerInteractionMode.PLACE_WALL) WallColor 
-                        else Color(0xFFE2E8F0),
-                    contentColor = if (canWatchAdForWalls || interactionMode == PlayerInteractionMode.PLACE_WALL) Color.White 
-                        else Color(0xFF334155)
-                ),
-                shape = RoundedCornerShape(12.dp),
-                elevation = ButtonDefaults.buttonElevation(
-                    defaultElevation = if (canWatchAdForWalls || interactionMode == PlayerInteractionMode.PLACE_WALL) 3.dp else 0.dp
-                ),
-                enabled = isMyTurn && !gameState.isAiThinking && (currentWalls > 0 || canWatchAdForWalls) && gameState.winner == null
-            ) {
-                if (canWatchAdForWalls) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "+2 Walls 🎬",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
-                } else {
-                    Text(
-                        text = "Place Wall ($currentWalls)",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Move Pawn",
+                    fontWeight = if (isMoveActive) FontWeight.Bold else FontWeight.SemiBold,
+                    fontSize = 13.sp
+                )
             }
         }
 
-        if (interactionMode == PlayerInteractionMode.PLACE_WALL && isMyTurn) {
-            if (appSettings.classicControls) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { onOrientationChange(true) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(40.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isWallHorizontal) WallColor else if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFF1F5F9),
-                            contentColor = if (isWallHorizontal) Color.White else WallColor
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        border = if (!isWallHorizontal) androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFCBD5E1)) else null,
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = if (isWallHorizontal) 2.dp else 0.dp),
-                        enabled = isMyTurn
-                    ) {
-                        // Visual horizontal bar indicator
-                        Box(
-                            modifier = Modifier
-                                .size(width = 14.dp, height = 4.dp)
-                                .background(if (isWallHorizontal) Color.White else WallColor, RoundedCornerShape(2.dp))
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Horizontal",
-                            fontWeight = if (isWallHorizontal) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 12.sp
-                        )
-                    }
-
-                    Button(
-                        onClick = { onOrientationChange(false) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(40.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (!isWallHorizontal) WallColor else if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFF1F5F9),
-                            contentColor = if (!isWallHorizontal) Color.White else WallColor
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        border = if (isWallHorizontal) androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFCBD5E1)) else null,
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = if (!isWallHorizontal) 2.dp else 0.dp),
-                        enabled = isMyTurn
-                    ) {
-                        // Visual vertical bar indicator
-                        Box(
-                            modifier = Modifier
-                                .size(width = 4.dp, height = 14.dp)
-                                .background(if (!isWallHorizontal) Color.White else WallColor, RoundedCornerShape(2.dp))
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Vertical",
-                            fontWeight = if (!isWallHorizontal) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 12.sp
-                        )
+        // 2. Wall Button (Compact, weight 1.0f)
+        Button(
+            onClick = {
+                if (canWatchAdForWalls) {
+                    onRequestRewardAd?.invoke()
+                } else if (currentWalls > 0) {
+                    if (activeAction == SelectedAction.HORIZONTAL_WALL || activeAction == SelectedAction.VERTICAL_WALL) {
+                        onSelectAction(activeAction)
+                    } else {
+                        onSelectAction(SelectedAction.HORIZONTAL_WALL)
                     }
                 }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                if (pendingWall == null) {
-                    Surface(
-                        color = if (appSettings.darkTheme) Color(0xFF1E293B) else Color(0xFFF1F5F9),
-                        shape = RoundedCornerShape(6.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = "👉 Tap any grid intersection point to place wall",
-                            fontSize = 11.sp,
-                            color = if (appSettings.darkTheme) Color(0xFF94A3B8) else Color(0xFF64748B),
-                            fontWeight = FontWeight.Medium,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                        )
-                    }
-                } else {
-                    if (wallValidationMsg == null) {
-                        Button(
-                            onClick = { onConfirmWall(pendingWall) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(42.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
-                            shape = RoundedCornerShape(10.dp),
-                            enabled = isMyTurn
-                        ) {
-                            Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Confirm ${if (isWallHorizontal) "Horizontal" else "Vertical"} Wall",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-                    } else {
-                        Surface(
-                            color = Color(0x18EF4444),
-                            shape = RoundedCornerShape(6.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33EF4444)),
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    Icons.Default.ErrorOutline,
-                                    contentDescription = null,
-                                    tint = ErrorRed,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = wallValidationMsg,
-                                    color = ErrorRed,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 11.sp,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
-                            }
-                        }
-                    }
+            },
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .testTag(if (playerNum == 1) "place_wall_btn" else "place_wall_btn_p2"),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isWallActive) wallColorActive else Color(0xFFF8FAFC),
+                contentColor = if (isWallActive) Color.White else Color(0xFF334155),
+                disabledContainerColor = Color(0xFFF1F5F9),
+                disabledContentColor = Color(0xFF94A3B8)
+            ),
+            shape = RoundedCornerShape(12.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = if (isWallActive) 3.dp else 0.dp),
+            border = if (!isWallActive) BorderStroke(1.dp, Color(0xFFCBD5E1)) else null,
+            contentPadding = PaddingValues(horizontal = 6.dp),
+            enabled = isMyTurn && !gameState.isAiThinking && (currentWalls > 0 || canWatchAdForWalls) && gameState.winner == null
+        ) {
+            if (canWatchAdForWalls) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(text = "🎬", fontSize = 12.sp)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = "+2 Extra",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = Color(0xFFD97706)
+                    )
                 }
             } else {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("Drag on the board to place a wall.", fontSize = 12.sp, color = WallColor, fontWeight = FontWeight.Medium)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "🧱",
+                        fontSize = 14.sp
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Wall ($currentWalls)",
+                        fontWeight = if (isWallActive) FontWeight.Bold else FontWeight.SemiBold,
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
     }
@@ -1199,6 +2088,7 @@ fun InteractiveBoard(
     pendingWall: Wall?,
     wallValidationMsg: String? = null,
     appSettings: AppSettings,
+    flipBoard: Boolean = false,
     onCellClicked: (Int, Int) -> Unit,
     onWallIntersectionClicked: (Int, Int) -> Unit,
     onDragWallPreview: (Int, Int, Boolean) -> Unit,
@@ -1207,7 +2097,7 @@ fun InteractiveBoard(
     Canvas(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(gameState, interactionMode, isWallHorizontal, appSettings) {
+            .pointerInput(gameState, interactionMode, isWallHorizontal, appSettings, flipBoard) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
@@ -1229,8 +2119,10 @@ fun InteractiveBoard(
                                     finalUp = change
                                 }
                             }
-                            val cellX = (finalUp.position.x / cellSize).toInt().coerceIn(0, 8)
-                            val cellY = (finalUp.position.y / cellSize).toInt().coerceIn(0, 8)
+                            val rawCellX = (finalUp.position.x / cellSize).toInt().coerceIn(0, 8)
+                            val rawCellY = (finalUp.position.y / cellSize).toInt().coerceIn(0, 8)
+                            val cellX = if (flipBoard) 8 - rawCellX else rawCellX
+                            val cellY = if (flipBoard) 8 - rawCellY else rawCellY
                             onCellClicked(cellX, cellY)
                         } else {
                             if (appSettings.classicControls) {
@@ -1260,12 +2152,16 @@ fun InteractiveBoard(
                                         }
                                     }
                                 }
-                                onWallIntersectionClicked(closestWx, closestWy)
+                                val targetWx = if (flipBoard) 7 - closestWx else closestWx
+                                val targetWy = if (flipBoard) 7 - closestWy else closestWy
+                                onWallIntersectionClicked(targetWx, targetWy)
                             } else {
-                                var currentWx = (startX / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
-                                var currentWy = (startY / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
+                                val rawWx0 = (startX / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
+                                val rawWy0 = (startY / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
                                 var isHoriz = true
-                                onDragWallPreview(currentWx, currentWy, isHoriz)
+                                val curWx0 = if (flipBoard) 7 - rawWx0 else rawWx0
+                                val curWy0 = if (flipBoard) 7 - rawWy0 else rawWy0
+                                onDragWallPreview(curWx0, curWy0, isHoriz)
 
                                 var finalUp: androidx.compose.ui.input.pointer.PointerInputChange? = null
                                 while (true) {
@@ -1280,9 +2176,11 @@ fun InteractiveBoard(
                                         if (abs(dx) > 15f || abs(dy) > 15f) {
                                             isHoriz = abs(dx) > abs(dy)
                                         }
-                                        currentWx = (change.position.x / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
-                                        currentWy = (change.position.y / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
-                                        onDragWallPreview(currentWx, currentWy, isHoriz)
+                                        val rawDragWx = (change.position.x / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
+                                        val rawDragWy = (change.position.y / cellSize - 0.5f).roundToInt().coerceIn(0, 7)
+                                        val curWx = if (flipBoard) 7 - rawDragWx else rawDragWx
+                                        val curWy = if (flipBoard) 7 - rawDragWy else rawDragWy
+                                        onDragWallPreview(curWx, curWy, isHoriz)
                                     }
                                 }
                                 if (finalUp != null) {
@@ -1300,22 +2198,24 @@ fun InteractiveBoard(
 
         val p1GoalColor = Player1Color.copy(alpha = 0.08f)
         val p2GoalColor = Player2Color.copy(alpha = 0.08f)
-        val gridLineColor = if (appSettings.darkTheme) Color(0xFF334155) else Color(0xFFD4C3A3)
+        val gridLineColor = Color(0xFFD4C3A3)
         val moveGlowColor = AccentGreen.copy(alpha = 0.22f)
         val pawnShadowColor = Color.Black.copy(alpha = 0.2f)
         val p1PawnHighlight = Color(0xFF60A5FA)
         val p2PawnHighlight = Color(0xFFF87171)
         val wallDotColor = WallColor.copy(alpha = 0.35f)
 
-        // 1. Draw goal rows (18 rects instead of 81)
+        // 1. Draw goal rows: Top row is always the local player's goal row!
+        val topRowGoalColor = if (flipBoard) p2GoalColor else p1GoalColor
+        val bottomRowGoalColor = if (flipBoard) p1GoalColor else p2GoalColor
         for (x in 0..8) {
             drawRect(
-                color = p1GoalColor,
+                color = topRowGoalColor,
                 topLeft = Offset(x * cellSize, 0f),
                 size = Size(cellSize, cellSize)
             )
             drawRect(
-                color = p2GoalColor,
+                color = bottomRowGoalColor,
                 topLeft = Offset(x * cellSize, 8 * cellSize),
                 size = Size(cellSize, cellSize)
             )
@@ -1339,30 +2239,34 @@ fun InteractiveBoard(
 
         // 2. Highlight Valid Moves
         for ((vx, vy) in validMoves) {
+            val drawVx = if (flipBoard) 8 - vx else vx
+            val drawVy = if (flipBoard) 8 - vy else vy
             drawCircle(
                 color = moveGlowColor,
                 radius = cellSize * 0.36f,
-                center = Offset(vx * cellSize + cellSize / 2f, vy * cellSize + cellSize / 2f)
+                center = Offset(drawVx * cellSize + cellSize / 2f, drawVy * cellSize + cellSize / 2f)
             )
             drawCircle(
                 color = AccentGreen,
                 radius = cellSize * 0.16f,
-                center = Offset(vx * cellSize + cellSize / 2f, vy * cellSize + cellSize / 2f)
+                center = Offset(drawVx * cellSize + cellSize / 2f, drawVy * cellSize + cellSize / 2f)
             )
         }
 
         // 2b. Highlight Invalid tapped cell with subtle pulsing red wash and border
         invalidCell?.let { (ix, iy) ->
+            val drawIx = if (flipBoard) 8 - ix else ix
+            val drawIy = if (flipBoard) 8 - iy else iy
             if (invalidCellAlpha > 0.01f) {
                 drawRoundRect(
                     color = Color(0xFFEF4444).copy(alpha = invalidCellAlpha * 0.35f),
-                    topLeft = Offset(ix * cellSize + 2.dp.toPx(), iy * cellSize + 2.dp.toPx()),
+                    topLeft = Offset(drawIx * cellSize + 2.dp.toPx(), drawIy * cellSize + 2.dp.toPx()),
                     size = Size(cellSize - 4.dp.toPx(), cellSize - 4.dp.toPx()),
                     cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx())
                 )
                 drawRoundRect(
                     color = Color(0xFFEF4444).copy(alpha = invalidCellAlpha),
-                    topLeft = Offset(ix * cellSize + 2.dp.toPx(), iy * cellSize + 2.dp.toPx()),
+                    topLeft = Offset(drawIx * cellSize + 2.dp.toPx(), drawIy * cellSize + 2.dp.toPx()),
                     size = Size(cellSize - 4.dp.toPx(), cellSize - 4.dp.toPx()),
                     cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx()),
                     style = Stroke(width = 2.5f.dp.toPx())
@@ -1370,12 +2274,43 @@ fun InteractiveBoard(
             }
         }
 
+        // 2c. Real-time visual indicator for latest pawn move
+        gameState.lastMovedPlayerPos?.let { (mx, my) ->
+            val drawMx = if (flipBoard) 8 - mx else mx
+            val drawMy = if (flipBoard) 8 - my else my
+            drawRoundRect(
+                color = Color(0xFFFBBF24).copy(alpha = 0.28f),
+                topLeft = Offset(drawMx * cellSize + 2.dp.toPx(), drawMy * cellSize + 2.dp.toPx()),
+                size = Size(cellSize - 4.dp.toPx(), cellSize - 4.dp.toPx()),
+                cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx())
+            )
+            drawRoundRect(
+                color = Color(0xFFF59E0B).copy(alpha = 0.65f),
+                topLeft = Offset(drawMx * cellSize + 2.dp.toPx(), drawMy * cellSize + 2.dp.toPx()),
+                size = Size(cellSize - 4.dp.toPx(), cellSize - 4.dp.toPx()),
+                cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx()),
+                style = Stroke(width = 2.dp.toPx())
+            )
+        }
+
         // 3. Draw Pawns
         // Player 1 (Blue)
+        val p1DrawX = if (flipBoard) 8 - gameState.player1.x else gameState.player1.x
+        val p1DrawY = if (flipBoard) 8 - gameState.player1.y else gameState.player1.y
         val p1Center = Offset(
-            gameState.player1.x * cellSize + cellSize / 2f,
-            gameState.player1.y * cellSize + cellSize / 2f
+            p1DrawX * cellSize + cellSize / 2f,
+            p1DrawY * cellSize + cellSize / 2f
         )
+        // White halo ring around local player's pawn
+        val isP1Local = (gameState.gameMode != GameMode.ONLINE || gameState.myPlayerNum == 1)
+        if (isP1Local) {
+            drawCircle(
+                color = Color.White,
+                radius = pawnRadius + 3.dp.toPx(),
+                center = p1Center,
+                style = Stroke(width = 2.5.dp.toPx())
+            )
+        }
         drawCircle(
             color = pawnShadowColor,
             radius = pawnRadius + 2.dp.toPx(),
@@ -1393,10 +2328,21 @@ fun InteractiveBoard(
         )
 
         // Player 2 (Red)
+        val p2DrawX = if (flipBoard) 8 - gameState.player2.x else gameState.player2.x
+        val p2DrawY = if (flipBoard) 8 - gameState.player2.y else gameState.player2.y
         val p2Center = Offset(
-            gameState.player2.x * cellSize + cellSize / 2f,
-            gameState.player2.y * cellSize + cellSize / 2f
+            p2DrawX * cellSize + cellSize / 2f,
+            p2DrawY * cellSize + cellSize / 2f
         )
+        val isP2Local = (gameState.gameMode == GameMode.ONLINE && gameState.myPlayerNum == 2)
+        if (isP2Local) {
+            drawCircle(
+                color = Color.White,
+                radius = pawnRadius + 3.dp.toPx(),
+                center = p2Center,
+                style = Stroke(width = 2.5.dp.toPx())
+            )
+        }
         drawCircle(
             color = pawnShadowColor,
             radius = pawnRadius + 2.dp.toPx(),
@@ -1415,26 +2361,49 @@ fun InteractiveBoard(
 
         // 4. Draw placed walls
         for (w in gameState.walls) {
+            val drawWx = if (flipBoard) 7 - w.x else w.x
+            val drawWy = if (flipBoard) 7 - w.y else w.y
+            val isLatest = (w == gameState.lastPlacedWall)
+            val stroke = if (isLatest) wallThickness + 2.dp.toPx() else wallThickness
+            val wallClr = if (isLatest) Color(0xFFE11D48) else WallColor
             if (w.isHorizontal) {
-                val startX = w.x * cellSize
-                val endX = (w.x + 2) * cellSize
-                val lineY = (w.y + 1) * cellSize
+                val startX = drawWx * cellSize
+                val endX = (drawWx + 2) * cellSize
+                val lineY = (drawWy + 1) * cellSize
+                if (isLatest) {
+                    drawLine(
+                        color = Color(0xFFFDA4AF).copy(alpha = 0.55f),
+                        start = Offset(startX, lineY),
+                        end = Offset(endX, lineY),
+                        strokeWidth = stroke + 4.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
                 drawLine(
-                    color = WallColor,
+                    color = wallClr,
                     start = Offset(startX, lineY),
                     end = Offset(endX, lineY),
-                    strokeWidth = wallThickness,
+                    strokeWidth = stroke,
                     cap = StrokeCap.Round
                 )
             } else {
-                val lineX = (w.x + 1) * cellSize
-                val startY = w.y * cellSize
-                val endY = (w.y + 2) * cellSize
+                val lineX = (drawWx + 1) * cellSize
+                val startY = drawWy * cellSize
+                val endY = (drawWy + 2) * cellSize
+                if (isLatest) {
+                    drawLine(
+                        color = Color(0xFFFDA4AF).copy(alpha = 0.55f),
+                        start = Offset(lineX, startY),
+                        end = Offset(lineX, endY),
+                        strokeWidth = stroke + 4.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
                 drawLine(
-                    color = WallColor,
+                    color = wallClr,
                     start = Offset(lineX, startY),
                     end = Offset(lineX, endY),
-                    strokeWidth = wallThickness,
+                    strokeWidth = stroke,
                     cap = StrokeCap.Round
                 )
             }
@@ -1442,11 +2411,13 @@ fun InteractiveBoard(
 
         // 5. Draw pending wall preview
         pendingWall?.let { w ->
+            val drawWx = if (flipBoard) 7 - w.x else w.x
+            val drawWy = if (flipBoard) 7 - w.y else w.y
             val previewColor = if (wallValidationMsg != null) ErrorRed.copy(alpha = 0.85f) else AccentGreen.copy(alpha = 0.85f)
             if (w.isHorizontal) {
-                val startX = w.x * cellSize
-                val endX = (w.x + 2) * cellSize
-                val lineY = (w.y + 1) * cellSize
+                val startX = drawWx * cellSize
+                val endX = (drawWx + 2) * cellSize
+                val lineY = (drawWy + 1) * cellSize
                 drawLine(
                     color = previewColor,
                     start = Offset(startX, lineY),
@@ -1455,9 +2426,9 @@ fun InteractiveBoard(
                     cap = StrokeCap.Round
                 )
             } else {
-                val lineX = (w.x + 1) * cellSize
-                val startY = w.y * cellSize
-                val endY = (w.y + 2) * cellSize
+                val lineX = (drawWx + 1) * cellSize
+                val startY = drawWy * cellSize
+                val endY = (drawWy + 2) * cellSize
                 drawLine(
                     color = previewColor,
                     start = Offset(lineX, startY),
@@ -1474,7 +2445,9 @@ fun InteractiveBoard(
                 for (wy in 0..7) {
                     val interX = (wx + 1) * cellSize
                     val interY = (wy + 1) * cellSize
-                    val isCurrentPending = pendingWall?.x == wx && pendingWall?.y == wy
+                    val actualWx = if (flipBoard) 7 - wx else wx
+                    val actualWy = if (flipBoard) 7 - wy else wy
+                    val isCurrentPending = pendingWall?.x == actualWx && pendingWall?.y == actualWy
                     if (isCurrentPending) {
                         drawCircle(
                             color = if (wallValidationMsg != null) ErrorRed else AccentGreen,

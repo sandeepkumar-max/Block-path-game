@@ -12,6 +12,16 @@ val AccentGreen = Color(0xFF10B981) // Emerald Green
 val ErrorRed = Color(0xFFEF4444)
 val SuccessGreen = Color(0xFF22C55E)
 
+// Vibrant Board Themes
+enum class BoardTheme(val displayName: String, val description: String) {
+    VIBRANT_NEON("Vibrant Neon", "High-contrast electric grid with glowing accents"),
+    CLASSIC_GRID("Classic Grid", "Traditional warm tournament board with crisp lines"),
+    EMERALD_NIGHT("Emerald Arena", "Deep forest emerald with crisp gold & white lines"),
+    SUNSET_EMBER("Sunset Ember", "Warm vibrant amber & coral high-contrast palette")
+}
+
+val ObstacleColor = Color(0xFFD97706) // Vibrant amber-orange for dynamic obstacles
+
 val Purple80 = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)
 val Pink80 = Color(0xFFEFB8C8)

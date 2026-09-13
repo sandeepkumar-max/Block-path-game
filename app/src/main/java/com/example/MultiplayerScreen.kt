@@ -3,6 +3,7 @@ package com.example
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,6 +34,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -510,320 +513,407 @@ private fun PlayWithFriendTab(
         context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     }
 
+    // 0 = Enter Code (Join), 1 = Create Room (Host)
+    var privateRoomMode by rememberSaveable {
+        mutableIntStateOf(if (matchmakingState is MatchmakingState.HostingRoom) 1 else 0)
+    }
+
+    LaunchedEffect(matchmakingState) {
+        if (matchmakingState is MatchmakingState.HostingRoom) {
+            privateRoomMode = 1
+        } else if (matchmakingState is MatchmakingState.JoiningRoom) {
+            privateRoomMode = 0
+        }
+    }
+
     var joinInputCode by remember { mutableStateOf("") }
     val isHosting = matchmakingState is MatchmakingState.HostingRoom
     val isJoining = matchmakingState is MatchmakingState.JoiningRoom
 
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Player Profile Identity Card (View-only identity display)
+        // Sub-tabs: Enter Code (Join) vs Create Room (Host)
         Surface(
-            color = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFFF1F5F9),
+            shape = RoundedCornerShape(12.dp),
             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(Color(0xFFEEF2FF), CircleShape),
-                        contentAlignment = Alignment.Center
+                Surface(
+                    onClick = {
+                        if (!isHosting && !isJoining) privateRoomMode = 0
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (privateRoomMode == 0) Color.White else Color.Transparent,
+                    shadowElevation = if (privateRoomMode == 0) 2.dp else 0.dp,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("subtab_join_code")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(userProfile.avatar, fontSize = 22.sp)
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "Playing as",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF64748B),
-                            letterSpacing = 0.5.sp
+                        Icon(
+                            Icons.Default.Pin,
+                            contentDescription = null,
+                            tint = if (privateRoomMode == 0) Color(0xFF10B981) else Color(0xFF64748B),
+                            modifier = Modifier.size(16.dp)
                         )
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = userProfile.name,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1E293B)
+                            text = "Enter Code (Join)",
+                            fontSize = 13.sp,
+                            fontWeight = if (privateRoomMode == 0) FontWeight.Bold else FontWeight.Medium,
+                            color = if (privateRoomMode == 0) Color(0xFF10B981) else Color(0xFF64748B)
                         )
                     }
                 }
+
                 Surface(
-                    color = Color(0xFFF0FDF4),
-                    shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBBF7D0))
+                    onClick = {
+                        if (!isHosting && !isJoining) privateRoomMode = 1
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (privateRoomMode == 1) Color.White else Color.Transparent,
+                    shadowElevation = if (privateRoomMode == 1) 2.dp else 0.dp,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("subtab_create_room")
                 ) {
-                    Text(
-                        text = "Level ${userProfile.level}",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF16A34A),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                    Row(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.AddCircleOutline,
+                            contentDescription = null,
+                            tint = if (privateRoomMode == 1) Color(0xFF4F46E5) else Color(0xFF64748B),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Create Room",
+                            fontSize = 13.sp,
+                            fontWeight = if (privateRoomMode == 1) FontWeight.Bold else FontWeight.Medium,
+                            color = if (privateRoomMode == 1) Color(0xFF4F46E5) else Color(0xFF64748B)
+                        )
+                    }
                 }
             }
         }
 
-        // Section 1: Host a Game
-        Surface(
-            color = Color.White,
-            shape = RoundedCornerShape(20.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+        if (privateRoomMode == 0) {
+            // Section: Join a Game by entering code
+            Surface(
+                color = Color.White,
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Text(
+                        text = "Join Friend's Match",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1E293B)
+                    )
+                    Text(
+                        text = "Enter the 4-digit numeric code provided by your friend",
+                        fontSize = 12.sp,
+                        color = Color(0xFF64748B)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Surface(
+                        color = Color(0xFFF8FAFC),
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text(
-                            text = "Host a Private Match",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1E293B)
-                        )
-                        Text(
-                            text = "Share this 4-digit code with your friend",
-                            fontSize = 12.sp,
-                            color = Color(0xFF64748B)
+                            text = "ℹ️ Turn timer settings are automatically synchronized from the room host.",
+                            fontSize = 11.sp,
+                            color = Color(0xFF475569),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                         )
                     }
-                    if (!isHosting) {
-                        IconButton(onClick = onGenerateNewCode) {
-                            Icon(Icons.Default.Refresh, contentDescription = "New Code", tint = Color(0xFF4F46E5))
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = joinInputCode,
+                            onValueChange = { if (it.length <= 4) joinInputCode = it.filter { ch -> ch.isDigit() } },
+                            placeholder = {
+                                Text(
+                                    "• • • •",
+                                    fontSize = 18.sp,
+                                    color = Color(0xFF94A3B8),
+                                    letterSpacing = 4.sp
+                                )
+                            },
+                            singleLine = true,
+                            textStyle = LocalTextStyle.current.copy(
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 6.sp,
+                                color = Color(0xFF1E293B)
+                            ),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (joinInputCode.length == 4) {
+                                        onJoinRoom(joinInputCode)
+                                    } else {
+                                        Toast.makeText(context, "Please enter a 4-digit room code", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("join_room_code_input"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Button(
+                            onClick = {
+                                if (joinInputCode.length == 4) {
+                                    onJoinRoom(joinInputCode)
+                                } else {
+                                    Toast.makeText(context, "Please enter a 4-digit room code", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            enabled = joinInputCode.length == 4 && !isJoining,
+                            modifier = Modifier
+                                .height(54.dp)
+                                .testTag("join_room_submit_btn"),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (isJoining) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text("Join Game", fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
+
+                    if (isJoining) {
+                        val joinState = matchmakingState as MatchmakingState.JoiningRoom
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = joinState.statusText,
+                            fontSize = 12.sp,
+                            color = Color(0xFF059669),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    if (matchmakingState is MatchmakingState.Error) {
+                        val err = matchmakingState as MatchmakingState.Error
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = err.message,
+                            fontSize = 12.sp,
+                            color = Color(0xFFEF4444),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Big Code Display Card
-                Surface(
-                    color = Color(0xFFEEF2FF),
-                    shape = RoundedCornerShape(14.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFC7D2FE)),
-                    modifier = Modifier.fillMaxWidth()
+            }
+        } else {
+            // Section: Host a Game
+            Surface(
+                color = Color.White,
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
                             Text(
-                                text = "ROOM CODE",
-                                fontSize = 10.sp,
+                                text = "Host a Private Match",
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF6366F1),
-                                letterSpacing = 1.sp
+                                color = Color(0xFF1E293B)
                             )
                             Text(
-                                text = hostedRoomCode,
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.Black,
-                                color = Color(0xFF1E1B4B),
-                                letterSpacing = 4.sp
+                                text = "Share this 4-digit code with your friend",
+                                fontSize = 12.sp,
+                                color = Color(0xFF64748B)
                             )
                         }
-
-                        // Copy Button
-                        IconButton(
-                            onClick = {
-                                val clip = ClipData.newPlainText("BlockPath Room Code", hostedRoomCode)
-                                clipboardManager.setPrimaryClip(clip)
-                                Toast.makeText(context, "Room Code $hostedRoomCode copied!", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.testTag("copy_room_code_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy Code",
-                                tint = Color(0xFF4F46E5)
-                            )
+                        if (!isHosting) {
+                            IconButton(onClick = onGenerateNewCode) {
+                                Icon(Icons.Default.Refresh, contentDescription = "New Code", tint = Color(0xFF4F46E5))
+                            }
                         }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                // Host Configurable Turn Timer Setting
-                if (!isHosting) {
-                    OnlineTimerSettingCard(
-                        timerEnabled = timerEnabled,
-                        onToggleTimer = onToggleTimer
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                }
-
-                if (!isHosting) {
-                    Button(
-                        onClick = { onHostRoom(hostedRoomCode) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("host_room_btn"),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.Podcasts, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Open Room & Wait for Friend", fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    val hostState = matchmakingState as MatchmakingState.HostingRoom
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                    // Big Code Display Card with Copy & WhatsApp Share
+                    Surface(
+                        color = Color(0xFFEEF2FF),
+                        shape = RoundedCornerShape(14.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFC7D2FE)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                color = Color(0xFF4F46E5),
-                                strokeWidth = 2.dp
-                            )
-                            Text(
-                                text = hostState.statusText,
-                                fontSize = 12.sp,
-                                color = Color(0xFF4F46E5),
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = onCancel,
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFCA5A5)),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth().height(44.dp)
-                        ) {
-                            Text("Cancel Hosting", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Section 2: Join a Game
-        Surface(
-            color = Color.White,
-            shape = RoundedCornerShape(20.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(18.dp)) {
-                Text(
-                    text = "Join a Friend's Match",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1E293B)
-                )
-                Text(
-                    text = "Enter the 4-digit code provided by your friend",
-                    fontSize = 12.sp,
-                    color = Color(0xFF64748B)
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Surface(
-                    color = Color(0xFFF8FAFC),
-                    shape = RoundedCornerShape(8.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "ℹ️ Turn timer settings are automatically synchronized from the room host.",
-                        fontSize = 11.sp,
-                        color = Color(0xFF475569),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = joinInputCode,
-                        onValueChange = { if (it.length <= 4) joinInputCode = it.filter { ch -> ch.isDigit() } },
-                        placeholder = { Text("e.g. 7429") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            imeAction = ImeAction.Done,
-                            capitalization = KeyboardCapitalization.None
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("join_room_code_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    Button(
-                        onClick = {
-                            if (joinInputCode.length == 4) {
-                                onJoinRoom(joinInputCode)
-                            } else {
-                                Toast.makeText(context, "Please enter a 4-digit room code", Toast.LENGTH_SHORT).show()
+                            Column {
+                                Text(
+                                    text = "ROOM CODE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF6366F1),
+                                    letterSpacing = 1.sp
+                                )
+                                Text(
+                                    text = hostedRoomCode,
+                                    fontSize = 28.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color(0xFF1E1B4B),
+                                    letterSpacing = 4.sp
+                                )
                             }
-                        },
-                        enabled = joinInputCode.length == 4 && !isJoining,
-                        modifier = Modifier
-                            .height(54.dp)
-                            .testTag("join_room_submit_btn"),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        if (isJoining) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                color = Color.White,
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Text("Join Game", fontWeight = FontWeight.Bold)
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // Copy Button
+                                IconButton(
+                                    onClick = {
+                                        val clip = ClipData.newPlainText("BlockPath Room Code", hostedRoomCode)
+                                        clipboardManager.setPrimaryClip(clip)
+                                        Toast.makeText(context, "Room Code $hostedRoomCode copied!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.testTag("copy_room_code_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Copy Code",
+                                        tint = Color(0xFF4F46E5)
+                                    )
+                                }
+
+                                // Share Button (WhatsApp / SMS)
+                                IconButton(
+                                    onClick = {
+                                        try {
+                                            val sendIntent = Intent().apply {
+                                                action = Intent.ACTION_SEND
+                                                putExtra(Intent.EXTRA_TEXT, "Join my BlockPath duel! Room Code: $hostedRoomCode")
+                                                type = "text/plain"
+                                            }
+                                            val shareIntent = Intent.createChooser(sendIntent, "Share Room Code")
+                                            context.startActivity(shareIntent)
+                                        } catch (e: Exception) {
+                                            // Handle exception gracefully
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Share Code",
+                                        tint = Color(0xFF4F46E5)
+                                    )
+                                }
+                            }
                         }
                     }
-                }
 
-                if (isJoining) {
-                    val joinState = matchmakingState as MatchmakingState.JoiningRoom
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = joinState.statusText,
-                        fontSize = 12.sp,
-                        color = Color(0xFF059669),
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                if (matchmakingState is MatchmakingState.Error) {
-                    val err = matchmakingState as MatchmakingState.Error
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = err.message,
-                        fontSize = 12.sp,
-                        color = Color(0xFFEF4444),
-                        fontWeight = FontWeight.Medium
-                    )
+                    // Host Configurable Turn Timer Setting
+                    if (!isHosting) {
+                        OnlineTimerSettingCard(
+                            timerEnabled = timerEnabled,
+                            onToggleTimer = onToggleTimer
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
+                    if (!isHosting) {
+                        Button(
+                            onClick = { onHostRoom(hostedRoomCode) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("host_room_btn"),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Podcasts, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Open Room & Wait for Friend", fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        val hostState = matchmakingState as MatchmakingState.HostingRoom
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = Color(0xFF4F46E5),
+                                    strokeWidth = 2.dp
+                                )
+                                Text(
+                                    text = hostState.statusText,
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF4F46E5),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = onCancel,
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth().height(44.dp)
+                            ) {
+                                Text("Cancel Hosting", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -77,6 +77,13 @@ data class GameState(
     val opponentWins: Int = 0
 )
 
+data class FloatingEmoji(
+    val id: Long = System.currentTimeMillis() + (0..10000).random(),
+    val emoji: String,
+    val isFromOpponent: Boolean,
+    val senderName: String = ""
+)
+
 data class AppSettings(
     val classicControls: Boolean = true,
     val soundEnabled: Boolean = true,
@@ -91,6 +98,68 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     val userProfile: StateFlow<UserProfile> = userProfileRepository.userProfile
     val soundManager: SoundManager = SoundManager.getInstance(application)
     val peerJsWebRtcManager: PeerJsWebRtcManager = PeerJsWebRtcManager(application)
+
+    val voiceChatState: StateFlow<VoiceChatState> = peerJsWebRtcManager.voiceState
+    private val _liveFloatingEmojis = MutableStateFlow<List<FloatingEmoji>>(emptyList())
+    val liveFloatingEmojis: StateFlow<List<FloatingEmoji>> = _liveFloatingEmojis.asStateFlow()
+
+    private val _emojiCooldownSeconds = MutableStateFlow(0)
+    val emojiCooldownSeconds: StateFlow<Int> = _emojiCooldownSeconds.asStateFlow()
+    private var emojiCooldownJob: Job? = null
+
+    fun sendLiveEmoji(emoji: String) {
+        if (_emojiCooldownSeconds.value > 0) return
+        val state = _gameState.value
+        val id = System.currentTimeMillis() + (0..10000).random()
+        val floating = FloatingEmoji(id = id, emoji = emoji, isFromOpponent = false, senderName = "You")
+        _liveFloatingEmojis.update { cur ->
+            (cur.takeLast(1) + floating)
+        }
+        viewModelScope.launch {
+            delay(2800)
+            _liveFloatingEmojis.update { cur -> cur.filter { it.id != id } }
+        }
+
+        // Start 5-second delay to prevent spamming
+        emojiCooldownJob?.cancel()
+        emojiCooldownJob = viewModelScope.launch {
+            for (sec in 5 downTo 1) {
+                _emojiCooldownSeconds.value = sec
+                delay(1000)
+            }
+            _emojiCooldownSeconds.value = 0
+        }
+
+        if (state.gameMode == GameMode.ONLINE && state.isRealPeerConnected) {
+            try {
+                val json = org.json.JSONObject().apply {
+                    put("type", "LIVE_EMOJI")
+                    put("emoji", emoji)
+                }.toString()
+                peerJsWebRtcManager.sendGameAction(json)
+            } catch (e: Exception) {
+                android.util.Log.e("GameViewModel", "Failed to send live emoji", e)
+            }
+        }
+    }
+
+    fun startVoiceChat() {
+        peerJsWebRtcManager.startVoiceChat()
+    }
+
+    fun toggleMicMute() {
+        val currentMuted = peerJsWebRtcManager.voiceState.value.isMicMuted
+        peerJsWebRtcManager.setMicMuted(!currentMuted)
+    }
+
+    fun toggleSpeakerMute() {
+        val currentMuted = peerJsWebRtcManager.voiceState.value.isSpeakerMuted
+        peerJsWebRtcManager.setSpeakerMuted(!currentMuted)
+    }
+
+    fun stopVoiceChat() {
+        peerJsWebRtcManager.stopVoiceChat()
+    }
 
     init {
         peerJsWebRtcManager.onOpponentProfileUpdated = { name, avatar ->
@@ -527,6 +596,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     startTurnTimer()
                 }
+            } else if (type == "LIVE_EMOJI") {
+                val emoji = json.optString("emoji", "👍")
+                val senderName = _gameState.value.opponentName
+                val id = System.currentTimeMillis() + (0..10000).random()
+                val floating = FloatingEmoji(id = id, emoji = emoji, isFromOpponent = true, senderName = senderName)
+                _liveFloatingEmojis.update { cur ->
+                    (cur.takeLast(1) + floating)
+                }
+                viewModelScope.launch {
+                    delay(2800)
+                    _liveFloatingEmojis.update { cur -> cur.filter { it.id != id } }
+                }
             } else if (type == "MOVE") {
                 val x = json.getInt("x")
                 val y = json.getInt("y")
@@ -698,6 +779,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         if (isOnline) {
             peerJsWebRtcManager.disconnectAndResetAll(notifyOpponent = true)
         }
+        emojiCooldownJob?.cancel()
+        _emojiCooldownSeconds.value = 0
+        _liveFloatingEmojis.value = emptyList()
         val profile = userProfile.value
         _gameState.value = GameState(
             player1 = Player(1, 4, 8, 10, Player1Color),

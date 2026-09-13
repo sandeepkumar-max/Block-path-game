@@ -27,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -51,6 +52,11 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.pm.PackageManager
 import com.example.ui.AppSettingsDialog
 import com.example.ui.BlockPathLogo
 import com.example.ui.theme.*
@@ -76,10 +82,32 @@ fun GameScreen(
 ) {
     val gameState by gameViewModel.gameState.collectAsState()
     val appSettings by gameViewModel.appSettings.collectAsState()
+    val voiceChatState by gameViewModel.voiceChatState.collectAsState()
+    val liveFloatingEmojis by gameViewModel.liveFloatingEmojis.collectAsState()
+    val emojiCooldownSeconds by gameViewModel.emojiCooldownSeconds.collectAsState()
+    var micPermissionNotice by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
     val activity = context as? Activity
     val app = context.applicationContext as? BlockPathApplication
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            micPermissionNotice = null
+            gameViewModel.startVoiceChat()
+        } else {
+            micPermissionNotice = "Microphone permission is required for live voice chat."
+        }
+    }
+
+    LaunchedEffect(micPermissionNotice) {
+        if (micPermissionNotice != null) {
+            delay(3200)
+            micPermissionNotice = null
+        }
+    }
 
     var interactionMode by remember { mutableStateOf(PlayerInteractionMode.MOVE_PAWN) }
     var activeAction by remember { mutableStateOf(SelectedAction.MOVE_PAWN) }
@@ -517,6 +545,54 @@ fun GameScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
 
+            // Online Live Voice & Quick Emojis Bar
+            if (gameState.gameMode == GameMode.ONLINE) {
+                OnlineLiveVoiceEmojiBar(
+                    voiceState = voiceChatState,
+                    isRealPeerConnected = gameState.isRealPeerConnected,
+                    emojiCooldownSeconds = emojiCooldownSeconds,
+                    onToggleMic = {
+                        val hasPermission = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        if (hasPermission) {
+                            if (!voiceChatState.isMicConnected) {
+                                gameViewModel.startVoiceChat()
+                            } else {
+                                gameViewModel.toggleMicMute()
+                            }
+                        } else {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    onToggleSpeaker = {
+                        gameViewModel.toggleSpeakerMute()
+                    },
+                    onSendEmoji = { emoji ->
+                        if (appSettings.soundEnabled) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        gameViewModel.sendLiveEmoji(emoji)
+                    },
+                    darkTheme = appSettings.darkTheme
+                )
+
+                if (micPermissionNotice != null) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = micPermissionNotice ?: "",
+                        color = Color(0xFFEF4444),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+
             // User / Bottom Area
             val bottomPlayerNum = if (gameState.gameMode == GameMode.ONLINE) gameState.myPlayerNum else 1
             val bottomPlayer = if (bottomPlayerNum == 1) gameState.player1 else gameState.player2
@@ -724,6 +800,12 @@ fun GameScreen(
                 }
             )
         }
+
+        // Floating Live Emojis Overlay (Local & Remote WebRTC reactions)
+        FloatingEmojisOverlay(
+            emojis = liveFloatingEmojis,
+            darkTheme = appSettings.darkTheme
+        )
     }
 
         if (showRewardDialog) {
@@ -2461,6 +2543,295 @@ fun InteractiveBoard(
                             center = Offset(interX, interY)
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun OnlineLiveVoiceEmojiBar(
+    voiceState: VoiceChatState,
+    isRealPeerConnected: Boolean,
+    emojiCooldownSeconds: Int = 0,
+    onToggleMic: () -> Unit,
+    onToggleSpeaker: () -> Unit,
+    onSendEmoji: (String) -> Unit,
+    darkTheme: Boolean
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.12f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(650, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "micPulse"
+    )
+
+    val isCooldownActive = emojiCooldownSeconds > 0
+
+    Surface(
+        color = if (darkTheme) Color(0xFF1E293B) else Color(0xFFF8FAFC),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, if (darkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)),
+        shadowElevation = 2.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("online_voice_emoji_bar")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Left: Voice Chat Controls
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val isMicActive = voiceState.isMicConnected && !voiceState.isMicMuted
+                val micBg = when {
+                    !isRealPeerConnected -> if (darkTheme) Color(0xFF334155) else Color(0xFFCBD5E1)
+                    isMicActive -> Color(0xFF10B981)
+                    voiceState.isMicConnected && voiceState.isMicMuted -> Color(0xFFEF4444)
+                    else -> Color(0xFF2563EB)
+                }
+
+                Surface(
+                    onClick = onToggleMic,
+                    enabled = isRealPeerConnected,
+                    shape = RoundedCornerShape(20.dp),
+                    color = micBg,
+                    modifier = Modifier
+                        .height(32.dp)
+                        .scale(if (isMicActive) pulseScale else 1f)
+                        .testTag("mic_toggle_btn")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = when {
+                                !isRealPeerConnected -> Icons.Default.MicOff
+                                isMicActive -> Icons.Default.Mic
+                                voiceState.isMicConnected && voiceState.isMicMuted -> Icons.Default.MicOff
+                                else -> Icons.Default.Mic
+                            },
+                            contentDescription = "Microphone",
+                            tint = Color.White,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = when {
+                                !isRealPeerConnected -> "Mic Off"
+                                isMicActive -> "Live"
+                                voiceState.isMicConnected && voiceState.isMicMuted -> "Muted"
+                                else -> "Talk"
+                            },
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(4.dp))
+
+                // Speaker toggle
+                IconButton(
+                    onClick = onToggleSpeaker,
+                    enabled = isRealPeerConnected,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .testTag("speaker_toggle_btn")
+                ) {
+                    Icon(
+                        imageVector = if (voiceState.isSpeakerMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                        contentDescription = "Speaker",
+                        tint = if (voiceState.isSpeakerMuted) Color(0xFF94A3B8) else Color(0xFF10B981),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                if (voiceState.isRemoteVoiceActive) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .background(Color(0xFF10B981), CircleShape)
+                    )
+                }
+            }
+
+            // Divider
+            Box(
+                modifier = Modifier
+                    .height(20.dp)
+                    .width(1.dp)
+                    .background(if (darkTheme) Color(0xFF334155) else Color(0xFFCBD5E1))
+            )
+
+            // Right: Quick Live Emoji Reactions with Spam Cooldown Timer
+            val quickEmojis = listOf("😂", "🔥", "👍", "👋", "🤯", "😎", "🎯", "💀")
+            Row(
+                modifier = Modifier.padding(start = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                // Animated Cooldown Badge
+                AnimatedVisibility(
+                    visible = isCooldownActive,
+                    enter = fadeIn(tween(150)) + expandHorizontally(tween(150)),
+                    exit = fadeOut(tween(150)) + shrinkHorizontally(tween(150))
+                ) {
+                    Surface(
+                        color = if (darkTheme) Color(0xFF334155) else Color(0xFFFEF3C7),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, if (darkTheme) Color(0xFF475569) else Color(0xFFFDE68A)),
+                        modifier = Modifier
+                            .height(26.dp)
+                            .padding(end = 2.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "⏳ ${emojiCooldownSeconds}s",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (darkTheme) Color(0xFFFBBF24) else Color(0xFFB45309)
+                            )
+                        }
+                    }
+                }
+
+                quickEmojis.forEach { emoji ->
+                    val emojiAlpha = if (isCooldownActive) 0.3f else 1f
+                    val isClickable = !isCooldownActive && isRealPeerConnected
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (!isCooldownActive && isRealPeerConnected) {
+                                    if (darkTheme) Color(0xFF334155).copy(alpha = 0.5f) else Color(0xFFE2E8F0).copy(alpha = 0.6f)
+                                } else Color.Transparent
+                            )
+                            .alpha(emojiAlpha)
+                            .clickable(enabled = isClickable) {
+                                onSendEmoji(emoji)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = emoji,
+                            fontSize = 15.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun FloatingEmojisOverlay(
+    emojis: List<FloatingEmoji>,
+    darkTheme: Boolean
+) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        emojis.forEach { floating ->
+            key(floating.id) {
+                FloatingEmojiItem(
+                    emoji = floating.emoji,
+                    isFromOpponent = floating.isFromOpponent,
+                    senderName = floating.senderName,
+                    darkTheme = darkTheme
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun FloatingEmojiItem(
+    emoji: String,
+    isFromOpponent: Boolean,
+    senderName: String,
+    darkTheme: Boolean
+) {
+    val animProgress = remember { Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        animProgress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 2600, easing = LinearEasing)
+        )
+    }
+
+    val progress = animProgress.value
+    val scale = when {
+        progress < 0.15f -> (progress / 0.15f) * 1.25f
+        progress < 0.25f -> 1.25f - ((progress - 0.15f) / 0.1f) * 0.25f
+        progress > 0.85f -> (1f - (progress - 0.85f) / 0.15f).coerceAtLeast(0f)
+        else -> 1f
+    }
+    val alpha = when {
+        progress < 0.1f -> progress / 0.1f
+        progress > 0.8f -> (1f - (progress - 0.8f) / 0.2f).coerceIn(0f, 1f)
+        else -> 1f
+    }
+    val yOffset = if (isFromOpponent) {
+        (-160).dp + (90.dp * progress)
+    } else {
+        160.dp - (90.dp * progress)
+    }
+    val xOffset = (sin(progress * 6f * Math.PI.toFloat()) * 14f).dp
+
+    Box(
+        modifier = Modifier
+            .offset(x = xOffset, y = yOffset)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                this.alpha = alpha
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            color = if (darkTheme) Color(0xF01E293B) else Color(0xF0FFFFFF),
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(
+                1.5.dp,
+                if (isFromOpponent) Color(0xFFEF4444) else Color(0xFF10B981)
+            ),
+            shadowElevation = 8.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = emoji,
+                    fontSize = 28.sp
+                )
+                if (senderName.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = senderName,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (darkTheme) Color.White else Color(0xFF0F172A)
+                    )
                 }
             }
         }

@@ -2,18 +2,32 @@ package com.example
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONObject
 import kotlin.random.Random
+
+data class VoiceChatState(
+    val isMicConnected: Boolean = false,
+    val isMicMuted: Boolean = false,
+    val isSpeakerMuted: Boolean = false,
+    val isRemoteVoiceActive: Boolean = false,
+    val errorMessage: String? = null
+)
 
 sealed class MatchmakingState {
     object Idle : MatchmakingState()
@@ -39,6 +53,7 @@ sealed class MatchmakingState {
  *  1. Quick Matchmaking (Random Duel) with decentralized Host/Guest pairing
  *  2. Custom Room Codes (Host / Join Friend) with synchronized room timer settings
  *  3. Real-time Player Profile & Role handshake (Host=P1, Guest=P2)
+ *  4. Live Voice Chat (P2P Audio Stream via PeerJS MediaConnection) with hardware AEC & Mute/Speaker toggles
  */
 class PeerJsWebRtcManager(private val context: Context) {
 
@@ -49,6 +64,9 @@ class PeerJsWebRtcManager(private val context: Context) {
 
     private val _matchmakingState = MutableStateFlow<MatchmakingState>(MatchmakingState.Idle)
     val matchmakingState: StateFlow<MatchmakingState> = _matchmakingState.asStateFlow()
+
+    private val _voiceState = MutableStateFlow(VoiceChatState())
+    val voiceState: StateFlow<VoiceChatState> = _voiceState.asStateFlow()
 
     private var onRemoteActionCallback: ((String) -> Unit)? = null
     var onOpponentProfileUpdated: ((String, String) -> Unit)? = null
@@ -115,10 +133,25 @@ class PeerJsWebRtcManager(private val context: Context) {
                 }
                 isPageReady = false
                 webView = WebView(context.applicationContext).apply {
-                    setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.allowFileAccess = true
+                    settings.allowContentAccess = true
                     settings.mediaPlaybackRequiresUserGesture = false
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onPermissionRequest(request: PermissionRequest) {
+                            try {
+                                request.grant(request.resources)
+                                Log.d("PeerJsWebRtc", "Granted WebView media permissions: ${request.resources.joinToString()}")
+                            } catch (e: Exception) {
+                                Log.e("PeerJsWebRtc", "Error granting WebView media permissions directly", e)
+                                try {
+                                    mainHandler.post { request.grant(request.resources) }
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
@@ -128,6 +161,8 @@ class PeerJsWebRtcManager(private val context: Context) {
                         }
                     }
                     addJavascriptInterface(WebRtcJsBridge(), "AndroidWebRTC")
+                    onResume()
+                    resumeTimers()
                     loadDataWithBaseURL("https://0.peerjs.com", PEERJS_HTML, "text/html", "UTF-8", null)
                 }
             } catch (e: Exception) {
@@ -264,6 +299,8 @@ class PeerJsWebRtcManager(private val context: Context) {
         disconnectGraceJob = null
         isGracePeriodActive = false
 
+        stopVoiceChat()
+
         _matchmakingState.value = MatchmakingState.Idle
         val wasConnected = isConnectedToRealPeer && isTwoWayHandshakeComplete
         isConnectedToRealPeer = false
@@ -302,6 +339,89 @@ class PeerJsWebRtcManager(private val context: Context) {
 
     fun cancelMatchmaking() {
         disconnectAndResetAll(notifyOpponent = false)
+    }
+
+    fun startVoiceChat() {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager?.isSpeakerphoneOn = !_voiceState.value.isSpeakerMuted
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val devices = audioManager?.availableCommunicationDevices ?: emptyList()
+                val speakerDevice = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                if (speakerDevice != null) {
+                    audioManager?.setCommunicationDevice(speakerDevice)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("PeerJsWebRtc", "Error setting audio manager mode for voice", e)
+        }
+        ensureWebView {
+            mainHandler.post {
+                try {
+                    webView?.evaluateJavascript("javascript:startVoiceChat();", null)
+                } catch (e: Exception) {
+                    Log.e("PeerJsWebRtc", "Error invoking startVoiceChat", e)
+                }
+            }
+        }
+    }
+
+    fun setMicMuted(muted: Boolean) {
+        _voiceState.update { it.copy(isMicMuted = muted) }
+        mainHandler.post {
+            try {
+                webView?.evaluateJavascript("javascript:setMicMuted($muted);", null)
+            } catch (e: Exception) {
+                Log.e("PeerJsWebRtc", "Error invoking setMicMuted", e)
+            }
+        }
+    }
+
+    fun setSpeakerMuted(muted: Boolean) {
+        _voiceState.update { it.copy(isSpeakerMuted = muted) }
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            audioManager?.isSpeakerphoneOn = !muted
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (!muted) {
+                    val devices = audioManager?.availableCommunicationDevices ?: emptyList()
+                    val speakerDevice = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                    if (speakerDevice != null) {
+                        audioManager?.setCommunicationDevice(speakerDevice)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("PeerJsWebRtc", "Error configuring speakerphone state", e)
+        }
+        mainHandler.post {
+            try {
+                webView?.evaluateJavascript("javascript:setSpeakerMuted($muted);", null)
+            } catch (e: Exception) {
+                Log.e("PeerJsWebRtc", "Error invoking setSpeakerMuted", e)
+            }
+        }
+    }
+
+    fun stopVoiceChat() {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager?.clearCommunicationDevice()
+            }
+            audioManager?.mode = AudioManager.MODE_NORMAL
+        } catch (e: Exception) {
+            Log.e("PeerJsWebRtc", "Error resetting audio mode", e)
+        }
+        _voiceState.value = VoiceChatState()
+        mainHandler.post {
+            try {
+                webView?.evaluateJavascript("javascript:stopVoiceChat();", null)
+            } catch (e: Exception) {
+                Log.e("PeerJsWebRtc", "Error invoking stopVoiceChat", e)
+            }
+        }
     }
 
     private fun startHeartbeat() {
@@ -500,6 +620,50 @@ class PeerJsWebRtcManager(private val context: Context) {
         }
 
         @JavascriptInterface
+        fun onVoiceStateChanged(hasStream: Boolean, isMuted: Boolean) {
+            Log.d("PeerJsWebRtc", "Local voice state: hasStream=$hasStream, isMuted=$isMuted")
+            scope.launch(Dispatchers.Main) {
+                _voiceState.update {
+                    it.copy(
+                        isMicConnected = hasStream,
+                        isMicMuted = isMuted,
+                        errorMessage = null
+                    )
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun onRemoteVoiceState(isActive: Boolean) {
+            Log.d("PeerJsWebRtc", "Remote voice state: isActive=$isActive")
+            scope.launch(Dispatchers.Main) {
+                _voiceState.update {
+                    it.copy(isRemoteVoiceActive = isActive)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun onSpeakerStateChanged(isMuted: Boolean) {
+            Log.d("PeerJsWebRtc", "Speaker muted state: $isMuted")
+            scope.launch(Dispatchers.Main) {
+                _voiceState.update {
+                    it.copy(isSpeakerMuted = isMuted)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun onVoiceError(error: String) {
+            Log.e("PeerJsWebRtc", "Voice error from JS: $error")
+            scope.launch(Dispatchers.Main) {
+                _voiceState.update {
+                    it.copy(errorMessage = error)
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun onPeerError(error: String) {
             Log.w("PeerJsWebRtc", "Network notice: $error")
             scope.launch(Dispatchers.Main) {
@@ -540,6 +704,16 @@ class PeerJsWebRtcManager(private val context: Context) {
     var myProfile = { name: "Player", avatar: "♟", winRate: 50 };
     var currentTimerEnabled = false;
 
+    // Live Voice Chat Variables
+    var localVoiceStream = null;
+    var activeVoiceCall = null;
+    var isMicMuted = false;
+    var isSpeakerMuted = false;
+    var isVoiceRequested = false;
+    var remoteAudioElem = null;
+    var webAudioCtx = null;
+    var webAudioGain = null;
+
     var rtcIceServers = [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
@@ -558,6 +732,241 @@ class PeerJsWebRtcManager(private val context: Context) {
         };
     }
 
+    function ensureRemoteAudioElement() {
+        if (!remoteAudioElem) {
+            remoteAudioElem = document.getElementById("remoteVoiceAudio");
+            if (!remoteAudioElem) {
+                remoteAudioElem = document.createElement("audio");
+                remoteAudioElem.id = "remoteVoiceAudio";
+                remoteAudioElem.autoplay = true;
+                remoteAudioElem.playsinline = true;
+                remoteAudioElem.volume = 1.0;
+                document.body.appendChild(remoteAudioElem);
+            }
+        }
+        return remoteAudioElem;
+    }
+
+    function setupWebAudioPipeline(stream) {
+        try {
+            var AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextClass) return;
+            if (!webAudioCtx || webAudioCtx.state === 'closed') {
+                webAudioCtx = new AudioContextClass();
+            }
+            if (webAudioCtx.state === 'suspended') {
+                webAudioCtx.resume();
+            }
+            if (stream) {
+                var source = webAudioCtx.createMediaStreamSource(stream);
+                webAudioGain = webAudioCtx.createGain();
+                webAudioGain.gain.value = isSpeakerMuted ? 0.0 : 1.6;
+                source.connect(webAudioGain);
+                webAudioGain.connect(webAudioCtx.destination);
+                console.log("WebAudio output connected with 1.6x clarity gain");
+            }
+        } catch(e) {
+            console.warn("setupWebAudioPipeline notice:", e);
+        }
+    }
+
+    function hookVoiceCall(call) {
+        if (!call) return;
+        activeVoiceCall = call;
+        call.on('stream', function(remoteStream) {
+            console.log("Remote voice audio stream received!");
+            var audio = ensureRemoteAudioElement();
+            audio.srcObject = remoteStream;
+            audio.volume = 1.0;
+            audio.muted = isSpeakerMuted;
+            try {
+                var p = audio.play();
+                if (p && p.catch) p.catch(function(e) { console.warn("Audio play notice:", e); });
+            } catch(e) {}
+
+            setupWebAudioPipeline(remoteStream);
+
+            if (window.AndroidWebRTC) {
+                window.AndroidWebRTC.onRemoteVoiceState(true);
+            }
+        });
+
+        call.on('close', function() {
+            console.log("Voice call closed");
+            if (window.AndroidWebRTC) {
+                window.AndroidWebRTC.onRemoteVoiceState(false);
+            }
+            activeVoiceCall = null;
+        });
+
+        call.on('error', function(err) {
+            console.error("Voice call error", err);
+            if (window.AndroidWebRTC) {
+                window.AndroidWebRTC.onVoiceError(err.type || err.message || "Voice call error");
+            }
+        });
+    }
+
+    function callPeerIfReady() {
+        if (!peer || !activeConn || !activeConn.peer) return;
+        if (!localVoiceStream) return;
+        try {
+            console.log("Initiating voice call to peer:", activeConn.peer);
+            if (activeVoiceCall) {
+                try { activeVoiceCall.close(); } catch(e){}
+                activeVoiceCall = null;
+            }
+            var call = peer.call(activeConn.peer, localVoiceStream);
+            if (call) {
+                hookVoiceCall(call);
+            }
+            try {
+                activeConn.send(JSON.stringify({ type: "VOICE_SIGNAL", action: "VOICE_CALL_STARTED" }));
+            } catch(e) {}
+        } catch(e) {
+            console.error("callPeerIfReady error", e);
+        }
+    }
+
+    function startVoiceChat() {
+        isVoiceRequested = true;
+        if (localVoiceStream) {
+            localVoiceStream.getAudioTracks().forEach(function(t) { t.enabled = !isMicMuted; });
+            if (activeVoiceCall && activeVoiceCall.peerConnection) {
+                var pc = activeVoiceCall.peerConnection;
+                var track = localVoiceStream.getAudioTracks()[0];
+                var senders = (pc && pc.getSenders) ? pc.getSenders() : [];
+                var audioSender = senders.find(function(s) { return s.track && s.track.kind === 'audio'; });
+                if (audioSender && audioSender.replaceTrack && track) {
+                    audioSender.replaceTrack(track).then(function() {
+                        console.log("Replaced audio track on active call");
+                    }).catch(function() {
+                        callPeerIfReady();
+                    });
+                } else {
+                    callPeerIfReady();
+                }
+            } else {
+                callPeerIfReady();
+            }
+            if (window.AndroidWebRTC) {
+                window.AndroidWebRTC.onVoiceStateChanged(true, isMicMuted);
+            }
+            return;
+        }
+
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: { ideal: true },
+                    noiseSuppression: { ideal: true },
+                    autoGainControl: { ideal: true },
+                    sampleRate: { ideal: 48000 }
+                },
+                video: false
+            }).then(function(stream) {
+                console.log("Local microphone stream acquired successfully");
+                localVoiceStream = stream;
+                if (isMicMuted) {
+                    localVoiceStream.getAudioTracks().forEach(function(t) { t.enabled = false; });
+                }
+                if (window.AndroidWebRTC) {
+                    window.AndroidWebRTC.onVoiceStateChanged(true, isMicMuted);
+                }
+                if (activeVoiceCall && activeVoiceCall.peerConnection) {
+                    var pc = activeVoiceCall.peerConnection;
+                    var track = stream.getAudioTracks()[0];
+                    var senders = (pc && pc.getSenders) ? pc.getSenders() : [];
+                    var audioSender = senders.find(function(s) { return s.track && s.track.kind === 'audio'; });
+                    if (audioSender && audioSender.replaceTrack && track) {
+                        audioSender.replaceTrack(track).then(function() {
+                            console.log("Replaced track with fresh mic stream");
+                        }).catch(function() {
+                            callPeerIfReady();
+                        });
+                    } else {
+                        callPeerIfReady();
+                    }
+                } else {
+                    callPeerIfReady();
+                }
+            }).catch(function(err) {
+                console.error("Failed to acquire mic stream", err);
+                if (window.AndroidWebRTC) {
+                    window.AndroidWebRTC.onVoiceError(err.name || err.message || "Microphone permission denied");
+                }
+            });
+        }
+    }
+
+    function setMicMuted(muted) {
+        isMicMuted = !!muted;
+        if (localVoiceStream) {
+            localVoiceStream.getAudioTracks().forEach(function(t) {
+                t.enabled = !isMicMuted;
+            });
+        }
+        if (window.AndroidWebRTC) {
+            window.AndroidWebRTC.onVoiceStateChanged(localVoiceStream != null, isMicMuted);
+        }
+    }
+
+    function setSpeakerMuted(muted) {
+        isSpeakerMuted = !!muted;
+        if (remoteAudioElem) {
+            remoteAudioElem.muted = isSpeakerMuted;
+        }
+        if (webAudioGain) {
+            webAudioGain.gain.value = isSpeakerMuted ? 0.0 : 1.6;
+        }
+        if (window.AndroidWebRTC) {
+            window.AndroidWebRTC.onSpeakerStateChanged(isSpeakerMuted);
+        }
+    }
+
+    function stopVoiceChat() {
+        isVoiceRequested = false;
+        if (localVoiceStream) {
+            localVoiceStream.getTracks().forEach(function(t) { t.stop(); });
+            localVoiceStream = null;
+        }
+        if (activeVoiceCall) {
+            try { activeVoiceCall.close(); } catch(e){}
+            activeVoiceCall = null;
+        }
+        if (remoteAudioElem) {
+            remoteAudioElem.srcObject = null;
+        }
+        if (webAudioCtx && webAudioCtx.state !== 'closed') {
+            try { webAudioCtx.suspend(); } catch(e){}
+        }
+        try {
+            if (activeConn) {
+                activeConn.send(JSON.stringify({ type: "VOICE_SIGNAL", action: "VOICE_CALL_STOPPED" }));
+            }
+        } catch(e) {}
+        if (window.AndroidWebRTC) {
+            window.AndroidWebRTC.onVoiceStateChanged(false, false);
+            window.AndroidWebRTC.onRemoteVoiceState(false);
+        }
+    }
+
+    function attachPeerCallListener(targetPeer) {
+        if (!targetPeer) return;
+        targetPeer.on('call', function(incomingCall) {
+            console.log("Incoming voice call from:", incomingCall.peer);
+            hookVoiceCall(incomingCall);
+            if (localVoiceStream) {
+                incomingCall.answer(localVoiceStream);
+            } else {
+                incomingCall.answer();
+                if (isVoiceRequested) {
+                    startVoiceChat();
+                }
+            }
+        });
+    }
+
     function initQuickMatch(lobbySlot, profileJson, timerEnabled) {
         try {
             if (profileJson) {
@@ -570,6 +979,7 @@ class PeerJsWebRtcManager(private val context: Context) {
             var hostTargetId = "bp_lobby_duel_v4_" + lobbySlot;
 
             peer = new Peer(hostTargetId, createPeerConfig());
+            attachPeerCallListener(peer);
 
             peer.on('open', function(id) {
                 if (window.AndroidWebRTC) {
@@ -594,6 +1004,7 @@ class PeerJsWebRtcManager(private val context: Context) {
                     try { peer.destroy(); } catch(e){}
                     var guestId = "bp_guest_" + Math.floor(10000 + Math.random() * 90000);
                     peer = new Peer(guestId, createPeerConfig());
+                    attachPeerCallListener(peer);
                     peer.on('open', function(id) {
                         var conn = peer.connect(hostTargetId, { reliable: true });
                         setupConnection(conn, false);
@@ -630,6 +1041,7 @@ class PeerJsWebRtcManager(private val context: Context) {
             }
             var myId = "bp_room_v4_" + roomCode;
             peer = new Peer(myId, createPeerConfig());
+            attachPeerCallListener(peer);
 
             peer.on('open', function(id) {
                 if (window.AndroidWebRTC) {
@@ -672,6 +1084,7 @@ class PeerJsWebRtcManager(private val context: Context) {
             var hostId = "bp_room_v4_" + roomCode;
 
             peer = new Peer(myId, createPeerConfig());
+            attachPeerCallListener(peer);
 
             peer.on('open', function(id) {
                 if (window.AndroidWebRTC) {
@@ -716,6 +1129,10 @@ class PeerJsWebRtcManager(private val context: Context) {
             if (window.AndroidWebRTC) {
                 window.AndroidWebRTC.onMatched(conn.peer, isHost, currentTimerEnabled);
             }
+
+            if (isVoiceRequested && localVoiceStream) {
+                callPeerIfReady();
+            }
         });
 
         conn.on('data', function(data) {
@@ -743,6 +1160,21 @@ class PeerJsWebRtcManager(private val context: Context) {
                     if (parsed.type === "OPPONENT_QUIT") {
                         if (window.AndroidWebRTC) {
                             window.AndroidWebRTC.onDataReceived(rawStr);
+                        }
+                        return;
+                    }
+                    if (parsed.type === "VOICE_SIGNAL") {
+                        if (parsed.action === "VOICE_CALL_STARTED") {
+                            if (window.AndroidWebRTC) {
+                                window.AndroidWebRTC.onRemoteVoiceState(true);
+                            }
+                            if (isVoiceRequested && localVoiceStream && !activeVoiceCall) {
+                                callPeerIfReady();
+                            }
+                        } else if (parsed.action === "VOICE_CALL_STOPPED") {
+                            if (window.AndroidWebRTC) {
+                                window.AndroidWebRTC.onRemoteVoiceState(false);
+                            }
                         }
                         return;
                     }
@@ -822,6 +1254,7 @@ class PeerJsWebRtcManager(private val context: Context) {
 
     function disconnect(notifyOpponent) {
         try {
+            stopVoiceChat();
             if (activeConn) {
                 if (notifyOpponent) {
                     try { 

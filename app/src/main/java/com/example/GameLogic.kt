@@ -116,7 +116,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             (cur.takeLast(1) + floating)
         }
         viewModelScope.launch {
-            delay(2800)
+            delay(2200)
             _liveFloatingEmojis.update { cur -> cur.filter { it.id != id } }
         }
 
@@ -139,6 +139,22 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 peerJsWebRtcManager.sendGameAction(json)
             } catch (e: Exception) {
                 android.util.Log.e("GameViewModel", "Failed to send live emoji", e)
+            }
+        } else if (state.gameMode == GameMode.VS_COMPUTER) {
+            // Friendly AI Bot response without blocking board
+            viewModelScope.launch {
+                delay(1400)
+                val botEmojis = listOf("🤖", "😎", "🎯", "🔥", "🤔", "👏")
+                val botEmoji = botEmojis.random()
+                val botFloating = FloatingEmoji(
+                    id = System.currentTimeMillis() + (0..10000).random(),
+                    emoji = botEmoji,
+                    isFromOpponent = true,
+                    senderName = "AI"
+                )
+                _liveFloatingEmojis.update { cur -> (cur.takeLast(1) + botFloating) }
+                delay(2200)
+                _liveFloatingEmojis.update { cur -> cur.filter { it.id != botFloating.id } }
             }
         }
     }

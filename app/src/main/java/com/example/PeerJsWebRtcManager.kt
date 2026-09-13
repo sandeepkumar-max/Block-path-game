@@ -348,9 +348,17 @@ class PeerJsWebRtcManager(private val context: Context) {
             audioManager?.isSpeakerphoneOn = !_voiceState.value.isSpeakerMuted
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val devices = audioManager?.availableCommunicationDevices ?: emptyList()
-                val speakerDevice = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-                if (speakerDevice != null) {
-                    audioManager?.setCommunicationDevice(speakerDevice)
+                val headset = devices.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
+                }
+                val targetDevice = if (!_voiceState.value.isSpeakerMuted) {
+                    headset ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                } else null
+                if (targetDevice != null) {
+                    audioManager?.setCommunicationDevice(targetDevice)
                 }
             }
         } catch (e: Exception) {
@@ -386,10 +394,18 @@ class PeerJsWebRtcManager(private val context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 if (!muted) {
                     val devices = audioManager?.availableCommunicationDevices ?: emptyList()
-                    val speakerDevice = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-                    if (speakerDevice != null) {
-                        audioManager?.setCommunicationDevice(speakerDevice)
+                    val headset = devices.firstOrNull {
+                        it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                        it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                        it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                        it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
                     }
+                    val targetDevice = headset ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                    if (targetDevice != null) {
+                        audioManager?.setCommunicationDevice(targetDevice)
+                    }
+                } else {
+                    audioManager?.clearCommunicationDevice()
                 }
             }
         } catch (e: Exception) {
@@ -712,6 +728,7 @@ class PeerJsWebRtcManager(private val context: Context) {
     var isVoiceRequested = false;
     var remoteAudioElem = null;
     var webAudioCtx = null;
+    var webAudioSource = null;
     var webAudioGain = null;
 
     var rtcIceServers = [
@@ -732,6 +749,50 @@ class PeerJsWebRtcManager(private val context: Context) {
         };
     }
 
+    // Opus SDP Optimization: Discontinuous Transmission (DTX) suppresses room noise when silent,
+    // In-band Forward Error Correction (FEC) prevents robotic packet loss artifacts,
+    // and mono speech encoding (32 kbps) eliminates comb-filtering.
+    function optimizeOpusSdp(sdp) {
+        if (!sdp) return sdp;
+        try {
+            var lines = sdp.split('\r\n');
+            var opusPt = null;
+            for (var i = 0; i < lines.length; i++) {
+                var m = lines[i].match(/^a=rtpmap:(\d+) opus\/48000/i);
+                if (m) {
+                    opusPt = m[1];
+                    break;
+                }
+            }
+            if (!opusPt) return sdp;
+
+            var fmtpFound = false;
+            for (var j = 0; j < lines.length; j++) {
+                if (lines[j].indexOf('a=fmtp:' + opusPt) === 0) {
+                    fmtpFound = true;
+                    var currentParams = lines[j];
+                    if (currentParams.indexOf('usedtx=') === -1) currentParams += ';usedtx=1';
+                    if (currentParams.indexOf('useinbandfec=') === -1) currentParams += ';useinbandfec=1';
+                    if (currentParams.indexOf('stereo=') === -1) currentParams += ';stereo=0;sprop-stereo=0';
+                    if (currentParams.indexOf('maxaveragebitrate=') === -1) currentParams += ';maxaveragebitrate=32000';
+                    lines[j] = currentParams;
+                    break;
+                }
+            }
+            if (!fmtpFound) {
+                for (var k = 0; k < lines.length; k++) {
+                    if (lines[k].indexOf('a=rtpmap:' + opusPt) === 0) {
+                        lines.splice(k + 1, 0, 'a=fmtp:' + opusPt + ' minptime=10;useinbandfec=1;usedtx=1;stereo=0;sprop-stereo=0;maxaveragebitrate=32000');
+                        break;
+                    }
+                }
+            }
+            return lines.join('\r\n');
+        } catch(e) {
+            return sdp;
+        }
+    }
+
     function ensureRemoteAudioElement() {
         if (!remoteAudioElem) {
             remoteAudioElem = document.getElementById("remoteVoiceAudio");
@@ -741,6 +802,8 @@ class PeerJsWebRtcManager(private val context: Context) {
                 remoteAudioElem.autoplay = true;
                 remoteAudioElem.playsinline = true;
                 remoteAudioElem.volume = 1.0;
+                // Muted so audio element doesn't collide with WebAudio DSP filter output
+                remoteAudioElem.muted = true;
                 document.body.appendChild(remoteAudioElem);
             }
         }
@@ -750,7 +813,10 @@ class PeerJsWebRtcManager(private val context: Context) {
     function setupWebAudioPipeline(stream) {
         try {
             var AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            if (!AudioContextClass) return;
+            if (!AudioContextClass) {
+                if (remoteAudioElem) remoteAudioElem.muted = isSpeakerMuted;
+                return;
+            }
             if (!webAudioCtx || webAudioCtx.state === 'closed') {
                 webAudioCtx = new AudioContextClass();
             }
@@ -758,15 +824,58 @@ class PeerJsWebRtcManager(private val context: Context) {
                 webAudioCtx.resume();
             }
             if (stream) {
-                var source = webAudioCtx.createMediaStreamSource(stream);
+                if (webAudioSource) {
+                    try { webAudioSource.disconnect(); } catch(e){}
+                }
+                webAudioSource = webAudioCtx.createMediaStreamSource(stream);
+
+                // 1. High-Pass Filter (85 Hz): Cuts AC hum, fan rumble, phone handling noise
+                var highpass = webAudioCtx.createBiquadFilter();
+                highpass.type = "highpass";
+                highpass.frequency.value = 85;
+                highpass.Q.value = 0.707;
+
+                // 2. Low-Pass Filter (7200 Hz): Eliminates high-frequency hiss, static & electronic buzz
+                var lowpass = webAudioCtx.createBiquadFilter();
+                lowpass.type = "lowpass";
+                lowpass.frequency.value = 7200;
+                lowpass.Q.value = 0.707;
+
+                // 3. Peaking Vocal Presence Filter (2400 Hz, +3.5 dB): Enhances speech intelligibility
+                var vocalPresence = webAudioCtx.createBiquadFilter();
+                vocalPresence.type = "peaking";
+                vocalPresence.frequency.value = 2400;
+                vocalPresence.gain.value = 3.5;
+                vocalPresence.Q.value = 1.1;
+
+                // 4. Dynamics Compressor: Levels voice, prevents clipping, controls noise bursts
+                var compressor = webAudioCtx.createDynamicsCompressor();
+                compressor.threshold.value = -24;
+                compressor.knee.value = 10;
+                compressor.ratio.value = 3.5;
+                compressor.attack.value = 0.005;
+                compressor.release.value = 0.09;
+
+                // 5. Clean Output Gain
                 webAudioGain = webAudioCtx.createGain();
-                webAudioGain.gain.value = isSpeakerMuted ? 0.0 : 1.6;
-                source.connect(webAudioGain);
+                webAudioGain.gain.value = isSpeakerMuted ? 0.0 : 1.15;
+
+                // Connect DSP pipeline
+                webAudioSource.connect(highpass);
+                highpass.connect(lowpass);
+                lowpass.connect(vocalPresence);
+                vocalPresence.connect(compressor);
+                compressor.connect(webAudioGain);
                 webAudioGain.connect(webAudioCtx.destination);
-                console.log("WebAudio output connected with 1.6x clarity gain");
+
+                if (remoteAudioElem) {
+                    remoteAudioElem.muted = true;
+                }
+                console.log("Studio voice clarity DSP pipeline active with noise reduction");
             }
         } catch(e) {
             console.warn("setupWebAudioPipeline notice:", e);
+            if (remoteAudioElem) remoteAudioElem.muted = isSpeakerMuted;
         }
     }
 
@@ -778,7 +887,7 @@ class PeerJsWebRtcManager(private val context: Context) {
             var audio = ensureRemoteAudioElement();
             audio.srcObject = remoteStream;
             audio.volume = 1.0;
-            audio.muted = isSpeakerMuted;
+            audio.muted = true; // WebAudio DSP plays the clean, filtered stream
             try {
                 var p = audio.play();
                 if (p && p.catch) p.catch(function(e) { console.warn("Audio play notice:", e); });
@@ -816,7 +925,7 @@ class PeerJsWebRtcManager(private val context: Context) {
                 try { activeVoiceCall.close(); } catch(e){}
                 activeVoiceCall = null;
             }
-            var call = peer.call(activeConn.peer, localVoiceStream);
+            var call = peer.call(activeConn.peer, localVoiceStream, { sdpTransform: optimizeOpusSdp });
             if (call) {
                 hookVoiceCall(call);
             }
@@ -858,10 +967,12 @@ class PeerJsWebRtcManager(private val context: Context) {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             navigator.mediaDevices.getUserMedia({
                 audio: {
-                    echoCancellation: { ideal: true },
-                    noiseSuppression: { ideal: true },
-                    autoGainControl: { ideal: true },
-                    sampleRate: { ideal: 48000 }
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    channelCount: 1,
+                    sampleRate: 48000,
+                    sampleSize: 16
                 },
                 video: false
             }).then(function(stream) {
@@ -913,11 +1024,19 @@ class PeerJsWebRtcManager(private val context: Context) {
 
     function setSpeakerMuted(muted) {
         isSpeakerMuted = !!muted;
-        if (remoteAudioElem) {
-            remoteAudioElem.muted = isSpeakerMuted;
+        if (webAudioGain && webAudioCtx) {
+            try {
+                webAudioGain.gain.setValueAtTime(isSpeakerMuted ? 0.0 : 1.15, webAudioCtx.currentTime);
+            } catch(e) {
+                webAudioGain.gain.value = isSpeakerMuted ? 0.0 : 1.15;
+            }
         }
-        if (webAudioGain) {
-            webAudioGain.gain.value = isSpeakerMuted ? 0.0 : 1.6;
+        if (remoteAudioElem) {
+            if (!webAudioCtx || webAudioCtx.state === 'closed') {
+                remoteAudioElem.muted = isSpeakerMuted;
+            } else {
+                remoteAudioElem.muted = true;
+            }
         }
         if (window.AndroidWebRTC) {
             window.AndroidWebRTC.onSpeakerStateChanged(isSpeakerMuted);
@@ -936,6 +1055,10 @@ class PeerJsWebRtcManager(private val context: Context) {
         }
         if (remoteAudioElem) {
             remoteAudioElem.srcObject = null;
+        }
+        if (webAudioSource) {
+            try { webAudioSource.disconnect(); } catch(e){}
+            webAudioSource = null;
         }
         if (webAudioCtx && webAudioCtx.state !== 'closed') {
             try { webAudioCtx.suspend(); } catch(e){}
@@ -957,9 +1080,9 @@ class PeerJsWebRtcManager(private val context: Context) {
             console.log("Incoming voice call from:", incomingCall.peer);
             hookVoiceCall(incomingCall);
             if (localVoiceStream) {
-                incomingCall.answer(localVoiceStream);
+                incomingCall.answer(localVoiceStream, { sdpTransform: optimizeOpusSdp });
             } else {
-                incomingCall.answer();
+                incomingCall.answer(undefined, { sdpTransform: optimizeOpusSdp });
                 if (isVoiceRequested) {
                     startVoiceChat();
                 }

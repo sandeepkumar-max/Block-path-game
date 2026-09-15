@@ -606,9 +606,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     turnTimerJob?.cancel()
                 } else {
                     if (actionType == "WALL") {
+                        soundManager.onWallPlaced(settings.soundEnabled)
                         soundManager.onWallPlacedImpact(settings.soundEnabled, settings.memeSoundEnabled)
                     } else {
-                        soundManager.onStrategicLeap(settings.soundEnabled, settings.memeSoundEnabled)
+                        soundManager.onPawnStep(settings.soundEnabled)
                     }
                     startTurnTimer()
                 }
@@ -902,6 +903,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _gameState.value = newState
 
         val currentSettings = _appSettings.value
+        // Play crisp wooden piece tap sound on every pawn step (respects Settings -> Game Sounds)
+        soundManager.onPawnStep(currentSettings.soundEnabled)
+
         if (winner != null) {
             soundManager.onVictoryClimax(currentSettings.soundEnabled, currentSettings.memeSoundEnabled)
             if (state.gameMode != GameMode.LOCAL_PASS_AND_PLAY) {
@@ -963,8 +967,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         )
         _gameState.value = newState
 
-        // Trigger intelligent sound effect based on actual board impact
+        // Always play the crisp tactile light wall placement sound (respects Settings -> Game Sounds)
         val currentSettings = _appSettings.value
+        soundManager.onWallPlaced(currentSettings.soundEnabled)
+
+        // Trigger intelligent sound effect based on actual board impact
         if (distBefore in 1..2 && pathIncrease >= 2) {
             // Emergency panic block when opponent was right at goal line!
             soundManager.onCloseCallPanic(currentSettings.soundEnabled, currentSettings.memeSoundEnabled)

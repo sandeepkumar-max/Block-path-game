@@ -35,6 +35,107 @@ import kotlin.random.Random
 class SoundManager private constructor(private val context: Context) {
 
     private var mediaPlayer: MediaPlayer? = null
+    private var stepMediaPlayer: MediaPlayer? = null
+    private var wallMediaPlayer: MediaPlayer? = null
+
+    /**
+     * Plays a crisp, subtle tactile wooden piece tap whenever a pawn takes a step.
+     * Controlled entirely by the user's soundEnabled setting.
+     * Uses an on-demand lightweight MediaPlayer instance to avoid Codec2 native resource queries.
+     */
+    @Synchronized
+    fun onPawnStep(soundEnabled: Boolean) {
+        if (!soundEnabled) return
+        try {
+            stepMediaPlayer?.let { player ->
+                if (player.isPlaying) {
+                    player.seekTo(0)
+                    return
+                }
+                player.release()
+            }
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_GAME)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
+            val mp = MediaPlayer.create(context, R.raw.pawn_step, audioAttributes, 0) ?: return
+            stepMediaPlayer = mp
+            mp.setVolume(0.55f, 0.55f)
+            mp.isLooping = false
+            mp.setOnCompletionListener { player ->
+                try {
+                    player.reset()
+                    player.release()
+                } catch (_: Exception) {}
+                if (stepMediaPlayer == player) {
+                    stepMediaPlayer = null
+                }
+            }
+            mp.setOnErrorListener { player, _, _ ->
+                try {
+                    player.reset()
+                    player.release()
+                } catch (_: Exception) {}
+                if (stepMediaPlayer == player) {
+                    stepMediaPlayer = null
+                }
+                true
+            }
+            mp.start()
+        } catch (e: Exception) {
+            Log.w("SoundManager", "Error playing pawn step sound", e)
+        }
+    }
+
+    /**
+     * Plays a satisfying, light wooden slot/snap sound whenever a wall is placed.
+     * Controlled entirely by the user's soundEnabled setting.
+     */
+    @Synchronized
+    fun onWallPlaced(soundEnabled: Boolean) {
+        if (!soundEnabled) return
+        try {
+            wallMediaPlayer?.let { player ->
+                if (player.isPlaying) {
+                    player.seekTo(0)
+                    return
+                }
+                player.release()
+            }
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_GAME)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
+            val mp = MediaPlayer.create(context, R.raw.wall_place, audioAttributes, 0) ?: return
+            wallMediaPlayer = mp
+            mp.setVolume(0.90f, 0.90f)
+            mp.isLooping = false
+            mp.setOnCompletionListener { player ->
+                try {
+                    player.reset()
+                    player.release()
+                } catch (_: Exception) {}
+                if (wallMediaPlayer == player) {
+                    wallMediaPlayer = null
+                }
+            }
+            mp.setOnErrorListener { player, _, _ ->
+                try {
+                    player.reset()
+                    player.release()
+                } catch (_: Exception) {}
+                if (wallMediaPlayer == player) {
+                    wallMediaPlayer = null
+                }
+                true
+            }
+            mp.start()
+        } catch (e: Exception) {
+            Log.w("SoundManager", "Error playing wall place sound", e)
+        }
+    }
 
     // Raw resource IDs for the 7 meme audio clips in res/raw (standard PCM WAV)
     private val rawVineBoom = R.raw.vine_boom
@@ -255,6 +356,20 @@ class SoundManager private constructor(private val context: Context) {
 
     fun release() {
         stopCurrentMemeSound()
+        try {
+            stepMediaPlayer?.let { player ->
+                if (player.isPlaying) player.stop()
+                player.reset()
+                player.release()
+            }
+            stepMediaPlayer = null
+            wallMediaPlayer?.let { player ->
+                if (player.isPlaying) player.stop()
+                player.reset()
+                player.release()
+            }
+            wallMediaPlayer = null
+        } catch (_: Exception) {}
     }
 
     companion object {

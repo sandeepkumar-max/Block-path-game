@@ -774,6 +774,8 @@ class PeerJsWebRtcManager(private val context: Context) {
                     if (currentParams.indexOf('usedtx=') === -1) currentParams += ';usedtx=1';
                     if (currentParams.indexOf('useinbandfec=') === -1) currentParams += ';useinbandfec=1';
                     if (currentParams.indexOf('stereo=') === -1) currentParams += ';stereo=0;sprop-stereo=0';
+                    if (currentParams.indexOf('cbr=') === -1) currentParams += ';cbr=0';
+                    if (currentParams.indexOf('ptime=') === -1) currentParams += ';minptime=10;ptime=20';
                     if (currentParams.indexOf('maxaveragebitrate=') === -1) currentParams += ';maxaveragebitrate=32000';
                     lines[j] = currentParams;
                     break;
@@ -782,7 +784,7 @@ class PeerJsWebRtcManager(private val context: Context) {
             if (!fmtpFound) {
                 for (var k = 0; k < lines.length; k++) {
                     if (lines[k].indexOf('a=rtpmap:' + opusPt) === 0) {
-                        lines.splice(k + 1, 0, 'a=fmtp:' + opusPt + ' minptime=10;useinbandfec=1;usedtx=1;stereo=0;sprop-stereo=0;maxaveragebitrate=32000');
+                        lines.splice(k + 1, 0, 'a=fmtp:' + opusPt + ' minptime=10;ptime=20;useinbandfec=1;usedtx=1;stereo=0;sprop-stereo=0;cbr=0;maxaveragebitrate=32000');
                         break;
                     }
                 }
@@ -818,7 +820,11 @@ class PeerJsWebRtcManager(private val context: Context) {
                 return;
             }
             if (!webAudioCtx || webAudioCtx.state === 'closed') {
-                webAudioCtx = new AudioContextClass();
+                try {
+                    webAudioCtx = new AudioContextClass({ latencyHint: 'interactive' });
+                } catch(e) {
+                    webAudioCtx = new AudioContextClass();
+                }
             }
             if (webAudioCtx.state === 'suspended') {
                 webAudioCtx.resume();
@@ -829,36 +835,36 @@ class PeerJsWebRtcManager(private val context: Context) {
                 }
                 webAudioSource = webAudioCtx.createMediaStreamSource(stream);
 
-                // 1. High-Pass Filter (85 Hz): Cuts AC hum, fan rumble, phone handling noise
+                // 1. High-Pass Filter (100 Hz): Eliminates low-end rumble, AC hum, table bumps, breath wind noise
                 var highpass = webAudioCtx.createBiquadFilter();
                 highpass.type = "highpass";
-                highpass.frequency.value = 85;
+                highpass.frequency.value = 100;
                 highpass.Q.value = 0.707;
 
-                // 2. Low-Pass Filter (7200 Hz): Eliminates high-frequency hiss, static & electronic buzz
+                // 2. Low-Pass Filter (7000 Hz): Eliminates high-frequency hiss, static & electronic buzz
                 var lowpass = webAudioCtx.createBiquadFilter();
                 lowpass.type = "lowpass";
-                lowpass.frequency.value = 7200;
+                lowpass.frequency.value = 7000;
                 lowpass.Q.value = 0.707;
 
-                // 3. Peaking Vocal Presence Filter (2400 Hz, +3.5 dB): Enhances speech intelligibility
+                // 3. Peaking Vocal Presence Filter (2200 Hz, +2.0 dB): Warm, balanced speech clarity without harsh sibilance
                 var vocalPresence = webAudioCtx.createBiquadFilter();
                 vocalPresence.type = "peaking";
-                vocalPresence.frequency.value = 2400;
-                vocalPresence.gain.value = 3.5;
-                vocalPresence.Q.value = 1.1;
+                vocalPresence.frequency.value = 2200;
+                vocalPresence.gain.value = 2.0;
+                vocalPresence.Q.value = 1.0;
 
-                // 4. Dynamics Compressor: Levels voice, prevents clipping, controls noise bursts
+                // 4. Studio Dynamics Compressor: Smooth 15ms attack & 200ms release prevent digital cracking and volume pumping
                 var compressor = webAudioCtx.createDynamicsCompressor();
-                compressor.threshold.value = -24;
-                compressor.knee.value = 10;
-                compressor.ratio.value = 3.5;
-                compressor.attack.value = 0.005;
-                compressor.release.value = 0.09;
+                compressor.threshold.value = -20;
+                compressor.knee.value = 15;
+                compressor.ratio.value = 3.0;
+                compressor.attack.value = 0.015;
+                compressor.release.value = 0.20;
 
-                // 5. Clean Output Gain
+                // 5. Clean Output Gain (0.95 gives headroom to avoid DAC clipping & cracking)
                 webAudioGain = webAudioCtx.createGain();
-                webAudioGain.gain.value = isSpeakerMuted ? 0.0 : 1.15;
+                webAudioGain.gain.value = isSpeakerMuted ? 0.0 : 0.95;
 
                 // Connect DSP pipeline
                 webAudioSource.connect(highpass);
@@ -871,7 +877,7 @@ class PeerJsWebRtcManager(private val context: Context) {
                 if (remoteAudioElem) {
                     remoteAudioElem.muted = true;
                 }
-                console.log("Studio voice clarity DSP pipeline active with noise reduction");
+                console.log("Studio voice clarity DSP pipeline active with noise reduction and anti-cracking compressor");
             }
         } catch(e) {
             console.warn("setupWebAudioPipeline notice:", e);
@@ -965,19 +971,44 @@ class PeerJsWebRtcManager(private val context: Context) {
         }
 
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            var audioConstraints = {
+                echoCancellation: { ideal: true },
+                noiseSuppression: { ideal: true },
+                autoGainControl: { ideal: true },
+                googEchoCancellation: { ideal: true },
+                googEchoCancellation2: { ideal: true },
+                googDAEchoCancellation: { ideal: true },
+                googAutoGainControl: { ideal: true },
+                googAutoGainControl2: { ideal: true },
+                googNoiseSuppression: { ideal: true },
+                googNoiseSuppression2: { ideal: true },
+                googHighpassFilter: { ideal: true },
+                googTypingNoiseDetection: { ideal: true },
+                googAudioMirroring: { ideal: false },
+                channelCount: { ideal: 1 },
+                sampleRate: { ideal: 48000 },
+                sampleSize: { ideal: 16 },
+                latency: { ideal: 0.01 }
+            };
+
             navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                    channelCount: 1,
-                    sampleRate: 48000,
-                    sampleSize: 16
-                },
+                audio: audioConstraints,
                 video: false
             }).then(function(stream) {
-                console.log("Local microphone stream acquired successfully");
+                console.log("Local microphone stream acquired successfully with studio constraints");
                 localVoiceStream = stream;
+
+                var audioTrack = stream.getAudioTracks()[0];
+                if (audioTrack && audioTrack.applyConstraints) {
+                    audioTrack.applyConstraints({
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }).catch(function(e) {
+                        console.warn("audioTrack.applyConstraints notice:", e);
+                    });
+                }
+
                 if (isMicMuted) {
                     localVoiceStream.getAudioTracks().forEach(function(t) { t.enabled = false; });
                 }

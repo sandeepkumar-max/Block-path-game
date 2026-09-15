@@ -31,13 +31,22 @@ fun SplashScreen(
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val scale by infiniteTransition.animateFloat(
-        initialValue = 0.95f,
-        targetValue = 1.05f,
+        initialValue = 0.96f,
+        targetValue = 1.04f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
+            animation = tween(1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "logo_scale"
+    )
+    val floatOffset by infiniteTransition.animateFloat(
+        initialValue = -4f,
+        targetValue = 4f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "float_offset"
     )
 
     LaunchedEffect(Unit) {
@@ -60,8 +69,8 @@ fun SplashScreen(
         */
         /* ========================================================================= */
 
-        // Direct, smooth entry to game (no waiting for ad, zero crash risk):
-        kotlinx.coroutines.delay(800L)
+        // Direct, smooth entry to game matching home screen transition:
+        kotlinx.coroutines.delay(1000L)
         onSplashComplete()
     }
 
@@ -71,8 +80,8 @@ fun SplashScreen(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF0F172A), // Dark slate navy
-                        Color(0xFF1E293B)  // Rich deep slate
+                        Color(0xFFFDFBF7), // Warm classic board cream
+                        Color(0xFFF5EFE6)  // Gentle wooden parchment
                     )
                 )
             ),
@@ -83,47 +92,108 @@ fun SplashScreen(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(32.dp)
         ) {
-            // Animated Logo
+            // Animated Wooden Logo Badge
             Box(
+                contentAlignment = Alignment.Center,
                 modifier = Modifier
+                    .offset(y = floatOffset.dp)
                     .scale(scale)
-                    .padding(bottom = 24.dp)
+                    .padding(bottom = 20.dp)
             ) {
-                BlockPathLogo(size = 100.dp, elevation = 12.dp)
+                // Ambient glow ring
+                Box(
+                    modifier = Modifier
+                        .size(126.dp)
+                        .background(
+                            Color(0xFFD4C3A3).copy(alpha = 0.35f),
+                            shape = RoundedCornerShape(32.dp)
+                        )
+                )
+
+                // Main 3x3 Board Logo
+                BlockPathLogo(size = 108.dp, elevation = 8.dp)
             }
 
             Text(
                 text = "BlockPath",
-                fontSize = 34.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                letterSpacing = 1.5.sp
+                fontSize = 36.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color(0xFF1E293B),
+                letterSpacing = 1.2.sp
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Strategy Maze & Block Duel",
+                text = "Tactical Maze & Wall Duel",
                 fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF94A3B8)
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF78716C),
+                letterSpacing = 0.5.sp
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // Loading indicator
+            // Badges / Feature Highlights
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    color = Color(0xFFE2E8F0),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "♟ Pass & Play",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF334155),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+                Surface(
+                    color = Color(0xFFFEF3C7),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "🤖 Smart AI",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF92400E),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+                Surface(
+                    color = Color(0xFFDBEAFE),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "🎙 Voice P2P",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1E40AF),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(42.dp))
+
+            // Warm Modern Circular Loading Indicator
             CircularProgressIndicator(
-                modifier = Modifier.size(32.dp),
-                color = Color(0xFF38BDF8),
+                modifier = Modifier.size(28.dp),
+                color = Player1Color,
+                trackColor = Color(0xFFE2E8F0),
                 strokeWidth = 3.dp
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Starting game...",
-                fontSize = 13.sp,
-                color = Color(0xFF64748B)
+                text = "Preparing board...",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF94A3B8)
             )
         }
 
@@ -135,9 +205,10 @@ fun SplashScreen(
             contentAlignment = Alignment.BottomCenter
         ) {
             Text(
-                text = "Version 1.0.0 • Offline & Local Multiplayer",
+                text = "Version 1.0.0 • Pure Strategy Board Game",
                 fontSize = 11.sp,
-                color = Color(0xFF475569)
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFFA8A29E)
             )
         }
     }
